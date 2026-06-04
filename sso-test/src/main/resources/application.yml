@@ -7,7 +7,7 @@ sso:
     client-secret: p3xghL9oWXOaZNQb61e1uUp_SguYm2O49rwMMN22NmIVWs6AGkYBeV53fFo526gt
     agent-id: 3974835501
     corp-id: ding7a539e334c0fe35ca1320dcb25e91351
-    redirect-uri: http://your-app.com/callback
+    redirect-uri: http://172.16.90.32:80
   wechat:
     agent-id: 1000002
     client-id: ww0fbdbf961fa91579

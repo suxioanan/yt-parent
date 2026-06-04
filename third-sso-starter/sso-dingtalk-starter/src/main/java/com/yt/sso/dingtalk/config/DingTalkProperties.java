@@ -17,9 +17,23 @@ public class DingTalkProperties extends BaseProperties {
      **/
     private String loginApi = "https://login.dingtalk.com/oauth2/auth";
 
+    /**
+     * 钉钉新版 API 基础地址（OAuth2 / 用户信息）
+     */
+    private String newBaseApi = "https://api.dingtalk.com";
 
     /**
-     * 钉钉 API 基础地址
+     * OAuth2 code 换 userAccessToken 接口
+     */
+    private String userTokenApi = "/v1.0/oauth2/userAccessToken";
+
+    /**
+     * 通过 accessToken 获取当前用户信息接口
+     */
+    private String contactUserApi = "/v1.0/contact/users/me";
+
+    /**
+     * 钉钉旧版 API 基础地址
      */
     private String baseApi = "https://oapi.dingtalk.com";
 
