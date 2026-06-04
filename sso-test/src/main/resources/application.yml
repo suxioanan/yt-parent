@@ -3,15 +3,18 @@ server:
 
 sso:
   dingtalk:
-    client-id: dingdsbdohnddozadwcg
-    client-secret: p3xghL9oWXOaZNQb61e1uUp_SguYm2O49rwMMN22NmIVWs6AGkYBeV53fFo526gt
-    agent-id: 3974835501
-    corp-id: ding7a539e334c0fe35ca1320dcb25e91351
+    client-id: xxx
+    client-secret: xxx
+    agent-id: 000
+    corp-id: xxx
+    redirect-uri: http://your-app.com/callback
   wechat:
-    agent-id: 1000002
-    client-id: ww0fbdbf961fa91579
-    secret: K4rA51B0xXngMVYD23PGQIO1WwD1D0y7iUt-_TtxCx8
+    agent-id: xxx
+    client-id: xxx
+    client-secret: xxxx
+    redirect-uri: http://your-app.com/callback
   feishu:
-    client-id: cli_aa854d43257a1bd1
-    secret: IcPRak4hZECbZhBFAOwgAcMcT7s7TBxD
-    redirect-uri: http://localhost:8089/oauth/feishu/callback
+    client-id: xxxx
+    client-secret: xxxxxx
+    redirect-uri: http://your-app.com/callback
+

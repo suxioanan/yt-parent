@@ -1,5 +1,6 @@
 package com.yt.sso.wechat.config;
 
+import com.yt.sso.model.BaseProperties;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -10,7 +11,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @Data
 @ConfigurationProperties("sso.wechat")
-public class WechatProperties {
+public class WechatProperties extends BaseProperties {
 
     /** 企业微信登录地址 */
     private String loginApi = "https://open.work.weixin.qq.com/wwopen/sso/qrConnect";
@@ -33,9 +34,4 @@ public class WechatProperties {
     /** 应用 AgentId */
     private String agentId;
 
-    /** 企业 CorpId */
-    private String clientId;
-
-    /** 应用 Secret */
-    private String secret;
 }

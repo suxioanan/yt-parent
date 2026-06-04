@@ -1,5 +1,6 @@
 package com.yt.sso.feishu.config;
 
+import com.yt.sso.model.BaseProperties;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -10,7 +11,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @Data
 @ConfigurationProperties("sso.feishu")
-public class FeishuProperties {
+public class FeishuProperties extends BaseProperties {
 
     /** 飞书授权登录地址 */
     private String loginApi = "https://open.feishu.cn/open-apis/authen/v1/authorize";
@@ -33,12 +34,5 @@ public class FeishuProperties {
     /** 获取用户详情接口 */
     private String userDetailUri = "/contact/v3/users";
 
-    /** 回调地址 */
-    private String redirectUri;
 
-    /** 应用 App ID */
-    private String clientId;
-
-    /** 应用 App Secret */
-    private String secret;
 }

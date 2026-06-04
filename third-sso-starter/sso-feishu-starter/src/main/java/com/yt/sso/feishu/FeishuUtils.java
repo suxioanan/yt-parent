@@ -156,7 +156,7 @@ public class FeishuUtils {
     private String httpAppAccessToken() {
         JSONObject body = new JSONObject();
         body.put("app_id", feishuProperties.getClientId());
-        body.put("app_secret", feishuProperties.getSecret());
+        body.put("app_secret", feishuProperties.getClientSecret());
 
         String url = feishuProperties.getBaseUri() + feishuProperties.getAppAccessTokenUri();
         log.info("请求飞书 app_access_token");
@@ -178,7 +178,7 @@ public class FeishuUtils {
     private String httpTenantAccessToken() {
         JSONObject body = new JSONObject();
         body.put("app_id", feishuProperties.getClientId());
-        body.put("app_secret", feishuProperties.getSecret());
+        body.put("app_secret", feishuProperties.getClientSecret());
 
         String url = feishuProperties.getBaseUri() + feishuProperties.getTenantAccessTokenUri();
         log.info("请求飞书 tenant_access_token");

@@ -102,7 +102,7 @@ public class WechatUtils {
     private String httpAccessToken() {
         HttpResponse response = HttpUtil.createGet(wechatProperties.getBaseUri() + wechatProperties.getTokenUri())
                 .form("corpid", wechatProperties.getClientId())
-                .form("corpsecret", wechatProperties.getSecret())
+                .form("corpsecret", wechatProperties.getClientSecret())
                 .execute();
         JSONObject result = JSONUtil.parseObj(response.body());
         log.info("httpAccessToken获取：{}" , result);

@@ -100,11 +100,11 @@ public class LoginState {
 ```yaml
 sso:
   dingtalk:
-    client-id: your-app-key
-    client-secret: your-app-secret
-    agent-id: 123456
-    corp-id: your-corp-id
-    redirect-uri: https://your-app.com/callback
+    client-id: xxx
+    client-secret: xxx
+    agent-id: xxx
+    corp-id: xxx
+    redirect-uri: http://your-app.com/callback
 ```
 
 ### 使用
@@ -158,10 +158,11 @@ String getUserIdByUnionId(String unionId);
 ```yaml
 sso:
   wechat:
-    client-id: your-corp-id
-    secret: your-corp-secret
-    agent-id: 1000002
-    redirect-uri: https://your-app.com/callback
+    agent-id: xxx
+    client-id: xxx
+    client-secret: xxxx
+    redirect-uri: http://your-app.com/callback
+
 ```
 
 ### 使用
@@ -207,9 +208,9 @@ SsoUser user = wechatSSOService.getUserByUserId("userId");
 ```yaml
 sso:
   feishu:
-    client-id: cli_xxx        # App ID
-    secret: xxx               # App Secret
-    redirect-uri: https://your-app.com/callback
+    client-id: xxxx
+    client-secret: xxxxxx
+    redirect-uri: http://your-app.com/callback
 ```
 
 ### 使用
@@ -316,20 +317,21 @@ PaddleOCR Spring Boot Starter，提供中英文文字识别、车牌识别、文
 # 三个平台只需配需要的即可
 sso:
   dingtalk:
-    client-id: dingxxx
+    client-id: xxx
     client-secret: xxx
-    agent-id: 3974835501
-    corp-id: dingxxx
+    agent-id: xxx
+    corp-id: xxx
     redirect-uri: http://your-app.com/callback
   wechat:
-    client-id: wwxxx
-    secret: xxx
-    agent-id: 1000002
+    agent-id: xxx
+    client-id: xxx
+    client-secret: xxxx
     redirect-uri: http://your-app.com/callback
   feishu:
-    client-id: cli_xxx
-    secret: xxx
+    client-id: xxxx
+    client-secret: xxxxxx
     redirect-uri: http://your-app.com/callback
+
 ```
 
 ---
