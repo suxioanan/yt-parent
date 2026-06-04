@@ -1,0 +1,61 @@
+# ============================================================
+# PaddleOCR Docker Compose
+# ============================================================
+#
+# 首次部署：
+#   1. 构建镜像：cd build && bash build.sh  或  docker build -t paddleocr-server ./build
+#   2. 启动容器：docker compose up -d
+#
+# 一键部署（自动构建 + 启动）：
+#   docker compose up -d --build
+#
+# Java 后端调用：
+#   curl -X POST -F "file=@test.jpg"  http://localhost:8000/ocr/ch
+#   curl -X POST -F "file=@plate.jpg" http://localhost:8000/ocr/plate
+#   curl -X POST -F "file=@doc.jpg"   http://localhost:8000/structure
+# ============================================================
+
+version: "3.9"
+
+services:
+  paddleocr:
+    build:
+      context: .
+      dockerfile: build/Dockerfile
+    image: paddleocr-server:1.0.0
+    container_name: paddleocr-server
+
+    ports:
+      - "8000:8000"
+
+    restart: unless-stopped
+
+    # ---------- 数据挂载（宿主机文件改完即生效，无需重新构建） ----------
+    volumes:
+      - ./models:/root/.paddleocr/whl   # 模型文件
+      - ./logs:/app/logs                 # 日志目录
+      - ./data:/app/data                 # 数据目录
+      - ./ocr_server.py:/app/ocr_server.py      # 服务代码
+      - ./requirements.txt:/app/requirements.txt  # Python 依赖（增减包后 rebuild）
+
+    # ---------- GPU 支持（有 NVIDIA GPU 时取消注释） ----------
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,17 @@
+server:
+  port: 8089
+
+sso:
+  dingtalk:
+    client-id: dingdsbdohnddozadwcg
+    client-secret: p3xghL9oWXOaZNQb61e1uUp_SguYm2O49rwMMN22NmIVWs6AGkYBeV53fFo526gt
+    agent-id: 3974835501
+    corp-id: ding7a539e334c0fe35ca1320dcb25e91351
+  wechat:
+    agent-id: 1000002
+    client-id: ww0fbdbf961fa91579
+    secret: K4rA51B0xXngMVYD23PGQIO1WwD1D0y7iUt-_TtxCx8
+  feishu:
+    client-id: cli_aa854d43257a1bd1
+    secret: IcPRak4hZECbZhBFAOwgAcMcT7s7TBxD
+    redirect-uri: http://localhost:8089/oauth/feishu/callback
