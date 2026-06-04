@@ -20,6 +20,7 @@
         <module>sso-common</module>
         <module>sso-dingtalk-starter</module>
         <module>sso-wechat-starter</module>
+        <module>sso-wechat-open-starter</module>
         <module>sso-feishu-starter</module>
         <module>sso-all-starter</module>
     </modules>
