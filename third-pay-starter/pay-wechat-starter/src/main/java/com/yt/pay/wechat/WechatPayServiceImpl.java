@@ -1,5 +1,6 @@
 package com.yt.pay.wechat;
 
+import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.wechat.pay.java.core.Config;
 import com.wechat.pay.java.core.RSAAutoCertificateConfig;
@@ -118,7 +119,15 @@ public class WechatPayServiceImpl implements WechatPayService {
                         String.class);
 
         String respBody = httpResp.getServiceResponse();
-        cn.hutool.json.JSONObject result = cn.hutool.json.JSONUtil.parseObj(respBody);
+        if (respBody == null || respBody.isEmpty()) {
+            throw new RuntimeException("微信付款码支付返回空响应");
+        }
+        JSONObject result;
+        try {
+            result = JSONUtil.parseObj(respBody);
+        } catch (Exception e) {
+            throw new RuntimeException("微信付款码支付响应解析失败: " + respBody, e);
+        }
         log.info("微信付款码支付返回: {}", result);
 
         if (result.containsKey("code")) {
@@ -260,9 +269,13 @@ public class WechatPayServiceImpl implements WechatPayService {
         if (tradeState == null) return PayStatus.NOTPAY;
         switch (tradeState) {
             case "SUCCESS": return PayStatus.SUCCESS;
-            case "CLOSED": return PayStatus.CLOSED;
+            case "REFUND": return PayStatus.REFUND;
+            case "CLOSED":
+            case "REVOKED": return PayStatus.CLOSED;
             case "NOTPAY": return PayStatus.NOTPAY;
-            case "USERPAYING": return PayStatus.USERPAYING;
+            case "USERPAYING":
+            case "ACCEPT":
+            case "PAYERROR": return PayStatus.USERPAYING;
             default: return PayStatus.NOTPAY;
         }
     }

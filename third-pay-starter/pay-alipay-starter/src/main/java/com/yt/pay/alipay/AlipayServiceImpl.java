@@ -207,17 +207,26 @@ public class AlipayServiceImpl implements AlipayService {
         req.setBizContent(biz.toString());
         try {
             AlipayTradeFastpayRefundQueryResponse resp = alipayClient.execute(req);
-            boolean success = resp.isSuccess();
+            RefundStatus status = convertRefundQueryStatus(resp.getRefundStatus());
             return RefundResult.builder()
                     .outRefundNo(resp.getOutRequestNo())
                     .refundId(resp.getOutRequestNo() != null ? resp.getOutRequestNo() : outRefundNo)
-                    .status(success ? RefundStatus.SUCCESS : RefundStatus.FAILED)
+                    .status(status)
                     .refundAmount(resp.getRefundAmount() != null
                             ? new BigDecimal(resp.getRefundAmount()) : null)
-                    .success(success)
+                    .success(status == RefundStatus.SUCCESS)
                     .build();
         } catch (AlipayApiException e) {
             throw new RuntimeException("支付宝退款查询异常: " + e.getMessage(), e);
+        }
+    }
+
+    private RefundStatus convertRefundQueryStatus(String alipayStatus) {
+        if (alipayStatus == null) return RefundStatus.PROCESSING;
+        switch (alipayStatus) {
+            case "REFUND_SUCCESS": return RefundStatus.SUCCESS;
+            case "REFUND_PROCESSING": return RefundStatus.PROCESSING;
+            default: return RefundStatus.FAILED;
         }
     }
 
