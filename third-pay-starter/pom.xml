@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.yt.third</groupId>
+        <artifactId>yt-parent</artifactId>
+        <version>1.0.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>third-pay-starter</artifactId>
+    <packaging>pom</packaging>
+    <name>third-pay-starter</name>
+    <description>第三方支付集成 - 聚合模块（微信支付/支付宝）</description>
+
+    <modules>
+        <module>pay-common</module>
+        <module>pay-wechat-starter</module>
+        <module>pay-alipay-starter</module>
+        <module>pay-all-starter</module>
+    </modules>
+
+</project>

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.yt.third</groupId>
+        <artifactId>third-pay-starter</artifactId>
+        <version>1.0.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+    <artifactId>pay-all-starter</artifactId>
+    <packaging>jar</packaging>
+    <name>pay-all-starter</name>
+    <description>支付全家桶 - 同时包含微信支付和支付宝</description>
+    <dependencies>
+        <dependency>
+            <groupId>com.yt.third</groupId>
+            <artifactId>pay-wechat-starter</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.yt.third</groupId>
+            <artifactId>pay-alipay-starter</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+</project>

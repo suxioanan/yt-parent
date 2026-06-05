@@ -5,3 +5,8 @@
 /.idea/
 /sso-test/target/
 /third-sso-starter/sso-wechat-open-starter/target/
+/third-pay-starter/pay-wechat-starter/target/
+/third-pay-starter/pay-common/target/classes/
+/pay-test/
+/third-pay-starter/pay-alipay-starter/target/
+/third-pay-starter/pay-common/target/
