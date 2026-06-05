@@ -13,7 +13,10 @@ import com.yt.pay.model.*;
 import com.yt.pay.alipay.config.AlipayProperties;
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.Map;
 
 /**
@@ -26,14 +29,18 @@ public class AlipayServiceImpl implements AlipayService {
 
     private final AlipayProperties properties;
     private final AlipayClient alipayClient;
+    private final String alipayPublicKeyContent;
 
     public AlipayServiceImpl(AlipayProperties properties) {
         this.properties = properties;
+        String privateKeyContent = readKeyFile(properties.getPrivateKeyPath());
+        this.alipayPublicKeyContent = readKeyFile(properties.getAlipayPublicKeyPath());
+
         AlipayConfig config = new AlipayConfig();
         config.setServerUrl(properties.getGatewayUrl());
         config.setAppId(properties.getAppId());
-        config.setPrivateKey(properties.getPrivateKeyPath());
-        config.setAlipayPublicKey(properties.getAlipayPublicKeyPath());
+        config.setPrivateKey(privateKeyContent);
+        config.setAlipayPublicKey(alipayPublicKeyContent);
         config.setFormat("json");
         config.setCharset("UTF-8");
         config.setSignType("RSA2");
@@ -51,6 +58,9 @@ public class AlipayServiceImpl implements AlipayService {
         biz.put("out_trade_no", request.getOutTradeNo());
         biz.put("total_amount", request.getTotalAmount().toString());
         biz.put("subject", request.getDescription());
+        if (request.getExpireMinutes() != null) {
+            biz.put("timeout_express", request.getExpireMinutes() + "m");
+        }
         req.setBizContent(biz.toString());
         req.setNotifyUrl(request.getNotifyUrl() != null
                 ? request.getNotifyUrl() : properties.getNotifyUrl());
@@ -79,14 +89,15 @@ public class AlipayServiceImpl implements AlipayService {
         try {
             AlipayTradePayResponse resp = alipayClient.execute(req);
             String raw = JSONUtil.toJsonStr(resp);
+            boolean success = resp.isSuccess();
             return PayResult.builder()
                     .outTradeNo(resp.getOutTradeNo())
                     .transactionId(resp.getTradeNo())
-                    .status(resp.isSuccess() ? PayStatus.SUCCESS : PayStatus.NOTPAY)
+                    .status(success ? PayStatus.SUCCESS : PayStatus.NOTPAY)
                     .totalAmount(request.getTotalAmount())
                     .payerOpenid(resp.getBuyerUserId())
                     .rawResponse(raw)
-                    .success(resp.isSuccess() && "10000".equals(resp.getCode()))
+                    .success(success)
                     .build();
         } catch (AlipayApiException e) {
             throw new RuntimeException("支付宝条码支付异常: " + e.getMessage(), e);
@@ -102,15 +113,16 @@ public class AlipayServiceImpl implements AlipayService {
         try {
             AlipayTradeQueryResponse resp = alipayClient.execute(req);
             String raw = JSONUtil.toJsonStr(resp);
+            PayStatus status = convertStatus(resp.getTradeStatus());
             return PayResult.builder()
                     .outTradeNo(resp.getOutTradeNo())
                     .transactionId(resp.getTradeNo())
-                    .status(convertStatus(resp.getTradeStatus()))
+                    .status(status)
                     .totalAmount(resp.getTotalAmount() != null
                             ? new BigDecimal(resp.getTotalAmount()) : null)
                     .payerOpenid(resp.getBuyerUserId())
                     .rawResponse(raw)
-                    .success(resp.isSuccess())
+                    .success(status == PayStatus.SUCCESS)
                     .build();
         } catch (AlipayApiException e) {
             throw new RuntimeException("支付宝订单查询异常: " + e.getMessage(), e);
@@ -147,12 +159,13 @@ public class AlipayServiceImpl implements AlipayService {
         req.setBizContent(biz.toString());
         try {
             AlipayTradeRefundResponse resp = alipayClient.execute(req);
+            boolean success = resp.isSuccess();
             return RefundResult.builder()
                     .outRefundNo(request.getOutRefundNo())
                     .refundId(resp.getTradeNo())
-                    .status(resp.isSuccess() ? "SUCCESS" : "FAILED")
+                    .status(success ? RefundStatus.SUCCESS : RefundStatus.FAILED)
                     .refundAmount(request.getRefundAmount())
-                    .success(resp.isSuccess())
+                    .success(success)
                     .build();
         } catch (AlipayApiException e) {
             throw new RuntimeException("支付宝退款异常: " + e.getMessage(), e);
@@ -160,19 +173,22 @@ public class AlipayServiceImpl implements AlipayService {
     }
 
     @Override
-    public RefundResult refundQuery(String outRefundNo) {
+    public RefundResult refundQuery(String outTradeNo, String outRefundNo) {
         AlipayTradeFastpayRefundQueryRequest req = new AlipayTradeFastpayRefundQueryRequest();
         JSONObject biz = new JSONObject();
+        biz.put("out_trade_no", outTradeNo);
         biz.put("out_request_no", outRefundNo);
         req.setBizContent(biz.toString());
         try {
             AlipayTradeFastpayRefundQueryResponse resp = alipayClient.execute(req);
+            boolean success = resp.isSuccess();
             return RefundResult.builder()
                     .outRefundNo(resp.getOutRequestNo())
                     .refundId(resp.getTradeNo())
-                    .status("SUCCESS")
-                    .refundAmount(new BigDecimal(resp.getRefundAmount()))
-                    .success(resp.isSuccess())
+                    .status(success ? RefundStatus.SUCCESS : RefundStatus.FAILED)
+                    .refundAmount(resp.getRefundAmount() != null
+                            ? new BigDecimal(resp.getRefundAmount()) : null)
+                    .success(success)
                     .build();
         } catch (AlipayApiException e) {
             throw new RuntimeException("支付宝退款查询异常: " + e.getMessage(), e);
@@ -180,24 +196,32 @@ public class AlipayServiceImpl implements AlipayService {
     }
 
     @Override
-    public PayNotifyResult handleNotify(String body, Map<String, String> params) {
+    public PayNotifyResult handleNotify(String body, Map<String, String> extra) {
         try {
             boolean verified = AlipaySignature.rsaCheckV1(
-                    params, properties.getAlipayPublicKeyPath(), "UTF-8", "RSA2");
+                    extra, alipayPublicKeyContent, "UTF-8", "RSA2");
             if (!verified) {
                 throw new RuntimeException("支付宝回调验签失败");
             }
             return PayNotifyResult.builder()
-                    .outTradeNo(params.get("out_trade_no"))
-                    .transactionId(params.get("trade_no"))
-                    .status(convertStatus(params.get("trade_status")))
-                    .totalAmount(new BigDecimal(params.get("total_amount")))
-                    .eventType(params.get("event_type") != null
-                            ? params.get("event_type") : "payment")
+                    .outTradeNo(extra.get("out_trade_no"))
+                    .transactionId(extra.get("trade_no"))
+                    .status(convertStatus(extra.get("trade_status")))
+                    .totalAmount(new BigDecimal(extra.get("total_amount")))
+                    .eventType(extra.get("event_type") != null
+                            ? extra.get("event_type") : "payment")
                     .rawBody(body)
                     .build();
         } catch (AlipayApiException e) {
             throw new RuntimeException("支付宝回调处理异常: " + e.getMessage(), e);
+        }
+    }
+
+    private String readKeyFile(String path) {
+        try {
+            return new String(Files.readAllBytes(Paths.get(path)));
+        } catch (IOException e) {
+            throw new RuntimeException("读取密钥文件失败: " + path, e);
         }
     }
 

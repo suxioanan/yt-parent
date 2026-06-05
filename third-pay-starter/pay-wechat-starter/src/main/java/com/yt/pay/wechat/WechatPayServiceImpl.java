@@ -25,7 +25,6 @@ import com.wechat.pay.java.service.refund.model.Refund;
 import com.yt.pay.model.*;
 import com.yt.pay.wechat.config.WechatPayProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.MediaType;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -63,15 +62,22 @@ public class WechatPayServiceImpl implements WechatPayService {
     @Override
     public String generateQrCode(PayRequest request) {
         Amount amount = new Amount();
-        amount.setTotal(toFen(request.getTotalAmount()));
+        amount.setTotal(Math.toIntExact(toFen(request.getTotalAmount())));
         amount.setCurrency("CNY");
 
         PrepayRequest prepayRequest = new PrepayRequest();
+        prepayRequest.setAppid(properties.getAppId());
+        prepayRequest.setMchid(properties.getMerchantId());
         prepayRequest.setOutTradeNo(request.getOutTradeNo());
         prepayRequest.setDescription(request.getDescription());
         prepayRequest.setAmount(amount);
         prepayRequest.setNotifyUrl(request.getNotifyUrl() != null
                 ? request.getNotifyUrl() : properties.getNotifyUrl());
+        if (request.getExpireMinutes() != null) {
+            prepayRequest.setTimeExpire(
+                    java.time.OffsetDateTime.now().plusMinutes(request.getExpireMinutes())
+                            .format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME));
+        }
 
         PrepayResponse response = nativePayService.prepay(prepayRequest);
         log.info("微信 Native 下单成功: outTradeNo={}, codeUrl={}",
@@ -82,6 +88,8 @@ public class WechatPayServiceImpl implements WechatPayService {
     @Override
     public PayResult microPay(MicroPayRequest request) {
         cn.hutool.json.JSONObject body = new cn.hutool.json.JSONObject();
+        body.put("appid", properties.getAppId());
+        body.put("mchid", properties.getMerchantId());
         body.put("out_trade_no", request.getOutTradeNo());
         body.put("auth_code", request.getAuthCode());
         body.put("description", request.getDescription());
@@ -94,7 +102,7 @@ public class WechatPayServiceImpl implements WechatPayService {
         log.info("微信付款码支付: outTradeNo={}", request.getOutTradeNo());
 
         HttpHeaders headers = new HttpHeaders();
-        headers.addHeader("Accept", MediaType.APPLICATION_JSON_VALUE);
+        headers.addHeader("Accept", "application/json");
         com.wechat.pay.java.core.http.HttpResponse<String> httpResp =
                 httpClient.post(headers,
                         properties.getPayCodeUrl(),
@@ -106,26 +114,29 @@ public class WechatPayServiceImpl implements WechatPayService {
         log.info("微信付款码支付返回: {}", result);
 
         if (result.containsKey("code")) {
-            throw new RuntimeException("微信付款码支付失败: " + result);
+            throw new RuntimeException("微信付款码支付失败: " + result.getStr("message"));
         }
+
+        String tradeState = result.getStr("trade_state");
         return PayResult.builder()
                 .outTradeNo(result.getStr("out_trade_no"))
                 .transactionId(result.getStr("transaction_id"))
-                .status(convertTradeState(result.getStr("trade_state")))
-                .totalAmount(request.getTotalAmount())
-                .payerOpenid(result.getJSONObject("payer") != null
-                        ? result.getJSONObject("payer").getStr("openid") : null)
+                .status(convertStatus(tradeState))
+                .totalAmount(result.get("amount") != null
+                        ? toYuan(result.getJSONObject("amount").getLong("total")) : request.getTotalAmount())
+                .payerOpenid(result.getStr("openid"))
                 .rawResponse(respBody)
-                .success("SUCCESS".equals(result.getStr("trade_state")))
+                .success("SUCCESS".equals(tradeState))
                 .build();
     }
 
     @Override
     public PayResult queryOrder(String outTradeNo) {
-        QueryOrderByOutTradeNoRequest req = new QueryOrderByOutTradeNoRequest();
-        req.setOutTradeNo(outTradeNo);
+        QueryOrderByOutTradeNoRequest request = new QueryOrderByOutTradeNoRequest();
+        request.setMchid(properties.getMerchantId());
+        request.setOutTradeNo(outTradeNo);
 
-        Transaction transaction = nativePayService.queryOrderByOutTradeNo(req);
+        Transaction transaction = nativePayService.queryOrderByOutTradeNo(request);
         String raw = JSONUtil.toJsonStr(transaction);
         return PayResult.builder()
                 .outTradeNo(transaction.getOutTradeNo())
@@ -144,6 +155,7 @@ public class WechatPayServiceImpl implements WechatPayService {
     @Override
     public void closeOrder(String outTradeNo) {
         CloseOrderRequest req = new CloseOrderRequest();
+        req.setMchid(properties.getMerchantId());
         req.setOutTradeNo(outTradeNo);
         nativePayService.closeOrder(req);
         log.info("微信关单成功: outTradeNo={}", outTradeNo);
@@ -152,8 +164,8 @@ public class WechatPayServiceImpl implements WechatPayService {
     @Override
     public RefundResult refund(RefundRequest request) {
         AmountReq amountReq = new AmountReq();
-        amountReq.setRefund((long) toFen(request.getRefundAmount()));
-        amountReq.setTotal((long) toFen(request.getTotalAmount()));
+        amountReq.setRefund(toFen(request.getRefundAmount()));
+        amountReq.setTotal(toFen(request.getTotalAmount()));
         amountReq.setCurrency("CNY");
 
         CreateRequest createRequest = new CreateRequest();
@@ -163,40 +175,40 @@ public class WechatPayServiceImpl implements WechatPayService {
         createRequest.setReason(request.getReason());
 
         Refund refund = refundService.create(createRequest);
+        RefundStatus status = convertRefundStatus(refund.getStatus());
         return RefundResult.builder()
                 .outRefundNo(refund.getOutRefundNo())
                 .refundId(refund.getRefundId())
-                .status(refund.getStatus() != null ? refund.getStatus().name() : null)
+                .status(status)
                 .refundAmount(request.getRefundAmount())
-                .success(refund.getStatus() != null
-                        && "SUCCESS".equals(refund.getStatus().name()))
+                .success(status == RefundStatus.SUCCESS)
                 .build();
     }
 
     @Override
-    public RefundResult refundQuery(String outRefundNo) {
+    public RefundResult refundQuery(String outTradeNo, String outRefundNo) {
         QueryByOutRefundNoRequest request = new QueryByOutRefundNoRequest();
         request.setOutRefundNo(outRefundNo);
 
         Refund refund = refundService.queryByOutRefundNo(request);
+        RefundStatus status = convertRefundStatus(refund.getStatus());
         return RefundResult.builder()
                 .outRefundNo(refund.getOutRefundNo())
                 .refundId(refund.getRefundId())
-                .status(refund.getStatus() != null ? refund.getStatus().name() : null)
+                .status(status)
                 .refundAmount(refund.getAmount() != null
                         ? toYuan(refund.getAmount().getRefund()) : null)
-                .success(refund.getStatus() != null
-                        && "SUCCESS".equals(refund.getStatus().name()))
+                .success(status == RefundStatus.SUCCESS)
                 .build();
     }
 
     @Override
-    public PayNotifyResult handleNotify(String body, Map<String, String> headers) {
+    public PayNotifyResult handleNotify(String body, Map<String, String> extra) {
         RequestParam requestParam = new RequestParam.Builder()
-                .serialNumber(headers.get("wechatpay-serial"))
-                .nonce(headers.get("wechatpay-nonce"))
-                .signature(headers.get("wechatpay-signature"))
-                .timestamp(headers.get("wechatpay-timestamp"))
+                .serialNumber(extra.get("wechatpay-serial"))
+                .nonce(extra.get("wechatpay-nonce"))
+                .signature(extra.get("wechatpay-signature"))
+                .timestamp(extra.get("wechatpay-timestamp"))
                 .body(body)
                 .build();
 
@@ -214,8 +226,11 @@ public class WechatPayServiceImpl implements WechatPayService {
 
     // ============ helpers ============
 
-    private int toFen(BigDecimal yuan) {
-        return yuan.multiply(new BigDecimal("100")).intValue();
+    /** 元 → 分，四舍五入到整数分 */
+    private long toFen(BigDecimal yuan) {
+        return yuan.multiply(new BigDecimal("100"))
+                .setScale(0, RoundingMode.HALF_UP)
+                .longValueExact();
     }
 
     private BigDecimal toYuan(Integer fen) {
@@ -228,7 +243,7 @@ public class WechatPayServiceImpl implements WechatPayService {
                 : new BigDecimal(fen).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
     }
 
-    private PayStatus convertTradeState(String tradeState) {
+    private PayStatus convertStatus(String tradeState) {
         if (tradeState == null) return PayStatus.NOTPAY;
         switch (tradeState) {
             case "SUCCESS": return PayStatus.SUCCESS;
@@ -241,12 +256,20 @@ public class WechatPayServiceImpl implements WechatPayService {
 
     private PayStatus convertStatus(Transaction.TradeStateEnum state) {
         if (state == null) return PayStatus.NOTPAY;
-        switch (state) {
-            case SUCCESS: return PayStatus.SUCCESS;
-            case CLOSED: return PayStatus.CLOSED;
-            case NOTPAY: return PayStatus.NOTPAY;
-            case USERPAYING: return PayStatus.USERPAYING;
-            default: return PayStatus.NOTPAY;
+        return convertStatus(state.name());
+    }
+
+    private RefundStatus convertRefundStatus(Enum<?> state) {
+        if (state == null) return RefundStatus.PROCESSING;
+        String name = state.name();
+        switch (name) {
+            case "SUCCESS": return RefundStatus.SUCCESS;
+            case "PROCESSING": return RefundStatus.PROCESSING;
+            case "FAILED":
+            case "ABNORMAL":
+            case "CLOSED":
+                return RefundStatus.FAILED;
+            default: return RefundStatus.PROCESSING;
         }
     }
 }

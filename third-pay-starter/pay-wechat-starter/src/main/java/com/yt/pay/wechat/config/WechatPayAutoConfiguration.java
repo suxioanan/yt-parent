@@ -4,6 +4,7 @@ import com.yt.pay.wechat.WechatPayService;
 import com.yt.pay.wechat.WechatPayServiceImpl;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 
@@ -13,6 +14,7 @@ import org.springframework.context.annotation.Bean;
  * @author sunan
  */
 @AutoConfiguration
+@ConditionalOnProperty(prefix = "pay.wechat", name = "merchant-id")
 @EnableConfigurationProperties(WechatPayProperties.class)
 public class WechatPayAutoConfiguration {
 

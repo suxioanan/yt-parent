@@ -25,9 +25,17 @@ public interface PayService {
     /** 退款（支持全额/部分退款） */
     RefundResult refund(RefundRequest request);
 
-    /** 退款查询 */
-    RefundResult refundQuery(String outRefundNo);
+    /**
+     * 退款查询
+     * @param outTradeNo  原商户订单号
+     * @param outRefundNo 退款单号
+     */
+    RefundResult refundQuery(String outTradeNo, String outRefundNo);
 
-    /** 处理异步回调 — 验签 + 解密 + 转为统一结果 */
-    PayNotifyResult handleNotify(String body, Map<String, String> headers);
+    /**
+     * 处理异步回调 — 验签 + 解密 + 转为统一结果
+     * @param body  回调请求体
+     * @param extra 附加参数（微信为 HTTP Headers，支付宝为 URL Query Params）
+     */
+    PayNotifyResult handleNotify(String body, Map<String, String> extra);
 }

@@ -14,8 +14,8 @@ public class RefundResult {
     private String outRefundNo;
     /** 平台退款单号 */
     private String refundId;
-    /** 退款状态：SUCCESS / PROCESSING / FAILED */
-    private String status;
+    /** 退款状态 */
+    private RefundStatus status;
     /** 退款金额 */
     private BigDecimal refundAmount;
     /** 是否成功 */
