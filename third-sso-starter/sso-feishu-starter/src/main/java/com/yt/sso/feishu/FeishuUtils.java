@@ -44,14 +44,19 @@ public class FeishuUtils {
         if (appAccessToken != null && now < appAccessTokenExpireAt) {
             return appAccessToken;
         }
-        synchronized (APP_LOCK) {
+        synchronized (TENANT_LOCK) {
             now = System.currentTimeMillis();
             if (appAccessToken != null && now < appAccessTokenExpireAt) {
                 return appAccessToken;
             }
-            String result = httpAppAccessToken();
-            appAccessToken = result;
-            appAccessTokenExpireAt = now + EXPIRE_MILLIS;
+            JSONObject tokenResult = httpAppAccessToken();
+            appAccessToken = tokenResult.getStr("app_access_token");
+            Long expiresIn =tokenResult.getLong("expire");
+            if (expiresIn == null) {
+                expiresIn = 5155L;
+            }
+            //默认有个300毫秒的缓冲
+            appAccessTokenExpireAt = System.currentTimeMillis() + (expiresIn - 300) * 1000;
             return appAccessToken;
         }
     }
@@ -69,13 +74,17 @@ public class FeishuUtils {
             if (tenantAccessToken != null && now < tenantAccessTokenExpireAt) {
                 return tenantAccessToken;
             }
-            String result = httpTenantAccessToken();
-            tenantAccessToken = result;
-            tenantAccessTokenExpireAt = now + EXPIRE_MILLIS;
+            JSONObject tokenResult = httpTenantAccessToken();
+            tenantAccessToken = tokenResult.getStr("tenant_access_token");
+            Long expiresIn =tokenResult.getLong("expire");
+            if (expiresIn == null) {
+                expiresIn = 5155L;
+            }
+            //默认有个300毫秒的缓冲
+            tenantAccessTokenExpireAt = System.currentTimeMillis() + (expiresIn - 300) * 1000;
             return tenantAccessToken;
         }
     }
-
     // ==================== 用户操作 ====================
 
 
@@ -90,19 +99,18 @@ public class FeishuUtils {
                 + feishuProperties.getUserDetailUri()
                 + "/" + userId
                 + "?user_id_type=user_id";
-
         log.info("请求飞书 getUserByUserId,uri={}, userId={}", url,userId);
-        HttpResponse response = HttpUtil.createGet(url)
+        try ( HttpResponse response = HttpUtil.createGet(url)
                 .header("Authorization", "Bearer " + tenantToken)
-                .execute();
-
-        JSONObject result = JSONUtil.parseObj(response.body());
-        log.info("飞书 getUserByUserId 返回：{}", result);
-        if (result.getInt("code") != 0) {
-            throw new RuntimeException("获取飞书用户详情失败：" + result);
+                .execute()){
+            JSONObject result = JSONUtil.parseObj(response.body());
+            log.info("飞书 getUserByUserId 返回：{}", result);
+            if (result.getInt("code") != 0) {
+                throw new RuntimeException("获取飞书用户详情失败：" + result);
+            }
+            JSONObject user = result.getJSONObject("data").getJSONObject("user");
+            return mapToSsoUser(user);
         }
-        JSONObject user = result.getJSONObject("data").getJSONObject("user");
-        return mapToSsoUser(user);
     }
 
     // ==================== 私有方法 ====================
@@ -117,18 +125,18 @@ public class FeishuUtils {
         body.put("code", code);
 
         String url = feishuProperties.getBaseUri() + feishuProperties.getUserAccessTokenUri();
-        log.info("请求飞书 getUserAccessToken,url={} code={}",url, code);
-        HttpResponse response = HttpUtil.createPost(url)
+        log.info("请求飞书 getUserAccessToken,url={} body ={}",url, JSONUtil.toJsonStr( body));
+        try (HttpResponse response = HttpUtil.createPost(url)
                 .header("Authorization", "Bearer " + appToken)
                 .body(JSONUtil.toJsonStr(body))
-                .execute();
-
-        JSONObject result = JSONUtil.parseObj(response.body());
-        log.info("飞书 getUserAccessToken 返回：{}", result);
-        if (result.getInt("code") != 0) {
-            throw new RuntimeException("获取飞书 user_access_token 失败：" + result);
+                .execute()){
+            JSONObject result = JSONUtil.parseObj(response.body());
+            log.info("飞书 getUserAccessToken 返回：{}", result);
+            if (result.getInt("code") != 0) {
+                throw new RuntimeException("获取飞书 user_access_token 失败：" + result);
+            }
+            return result.getJSONObject("data").getStr("access_token");
         }
-        return result.getJSONObject("data").getStr("access_token");
     }
 
     /**
@@ -137,61 +145,59 @@ public class FeishuUtils {
     public SsoUser getUserInfo(String userAccessToken) {
         String url = feishuProperties.getBaseUri() + feishuProperties.getUserInfoUri();
         log.info("请求飞书 getUserInfo :{}", url);
-        HttpResponse response = HttpUtil.createGet(url)
+        try (HttpResponse response = HttpUtil.createGet(url)
                 .header("Authorization", "Bearer " + userAccessToken)
-                .execute();
-
-        JSONObject result = JSONUtil.parseObj(response.body());
-        log.info("飞书 getUserInfo 返回：{}", result);
-        if (result.getInt("code") != 0) {
-            throw new RuntimeException("获取飞书用户信息失败：" + result);
+                .execute()){
+            JSONObject result = JSONUtil.parseObj(response.body());
+            log.info("飞书 getUserInfo 返回：{}", result);
+            if (result.getInt("code") != 0) {
+                throw new RuntimeException("获取飞书用户信息失败：" + result);
+            }
+            JSONObject data = result.getJSONObject("data");
+            return mapToSsoUser(data);
         }
-        JSONObject data = result.getJSONObject("data");
-        return mapToSsoUser(data);
     }
 
     /**
      * 获取 app_access_token
      */
-    private String httpAppAccessToken() {
+    private JSONObject httpAppAccessToken() {
         JSONObject body = new JSONObject();
         body.put("app_id", feishuProperties.getClientId());
         body.put("app_secret", feishuProperties.getClientSecret());
-
         String url = feishuProperties.getBaseUri() + feishuProperties.getAppAccessTokenUri();
-        log.info("请求飞书 app_access_token");
-        HttpResponse response = HttpUtil.createPost(url)
+        log.info("请求飞书 app_access_token url:{},body:{}",url,JSONUtil.toJsonStr( body));
+        try (HttpResponse response = HttpUtil.createPost(url)
                 .body(JSONUtil.toJsonStr(body))
-                .execute();
-
-        JSONObject result = JSONUtil.parseObj(response.body());
-        log.info("飞书 app_access_token 返回：{}", result);
-        if (result.getInt("code") != 0) {
-            throw new RuntimeException("获取飞书 app_access_token 失败：" + result);
+                .execute()){
+            JSONObject result = JSONUtil.parseObj(response.body());
+            log.info("飞书 app_access_token 返回：{}", result);
+            if (result.getInt("code") != 0) {
+                throw new RuntimeException("获取飞书 app_access_token 失败：" + result);
+            }
+            return result;
         }
-        return result.getStr("app_access_token");
     }
 
     /**
      * 获取 tenant_access_token
      */
-    private String httpTenantAccessToken() {
+    private JSONObject httpTenantAccessToken() {
         JSONObject body = new JSONObject();
         body.put("app_id", feishuProperties.getClientId());
         body.put("app_secret", feishuProperties.getClientSecret());
-
         String url = feishuProperties.getBaseUri() + feishuProperties.getTenantAccessTokenUri();
-        log.info("请求飞书 tenant_access_token");
-        HttpResponse response = HttpUtil.createPost(url)
+        log.info("请求飞书 tenant_access_token 路径:{},参数:{}",url,body);
+        try (HttpResponse response = HttpUtil.createPost(url)
                 .body(JSONUtil.toJsonStr(body))
-                .execute();
-
-        JSONObject result = JSONUtil.parseObj(response.body());
-        log.info("飞书 tenant_access_token 返回：{}", result);
-        if (result.getInt("code") != 0) {
-            throw new RuntimeException("获取飞书 tenant_access_token 失败：" + result);
+                .execute()){
+            JSONObject result = JSONUtil.parseObj(response.body());
+            log.info("飞书 tenant_access_token 返回：{}", result);
+            if (result.getInt("code") != 0) {
+                throw new RuntimeException("获取飞书 tenant_access_token 失败：" + result);
+            }
+            return result ;
         }
-        return result.getStr("tenant_access_token");
     }
 
     /**

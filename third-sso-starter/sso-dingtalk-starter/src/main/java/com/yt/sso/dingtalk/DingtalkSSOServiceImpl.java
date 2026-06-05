@@ -15,7 +15,6 @@ import java.nio.charset.StandardCharsets;
 
 /**
  * 钉钉 SSO 服务实现
- *
  * @author sunan
  */
 @Slf4j
@@ -23,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 public class DingtalkSSOServiceImpl implements DingtalkSSOService {
 
     private final DingTalkProperties dingTalkProperties;
+
     private final DingTalkUtils dingTalkUtils;
 
     @Override
@@ -70,18 +70,19 @@ public class DingtalkSSOServiceImpl implements DingtalkSSOService {
         body.put("grantType", "authorization_code");
 
         String url = dingTalkProperties.getNewBaseApi() + dingTalkProperties.getUserTokenApi();
-        log.info("请求钉钉 getAccessTokenByCode, url={}", url);
-        HttpResponse response = HttpUtil.createPost(url)
+        log.info("请求钉钉 getAccessTokenByCode, url={},body={}", url, JSONUtil.toJsonStr(body));
+        try (HttpResponse response = HttpUtil.createPost(url)
                 .body(JSONUtil.toJsonStr(body))
-                .execute();
+                .execute()) {
+            JSONObject result = JSONUtil.parseObj(response.body());
+            log.info("钉钉 getAccessTokenByCode 返回：{}", result);
 
-        JSONObject result = JSONUtil.parseObj(response.body());
-        log.info("钉钉 getAccessTokenByCode 返回：{}", result);
-
-        if (result.getStr("accessToken") == null) {
-            throw new RuntimeException("获取钉钉 accessToken 失败：" + result);
+            if (result.getStr("accessToken") == null) {
+                throw new RuntimeException("获取钉钉 accessToken 失败：" + result);
+            }
+            return result.getStr("accessToken");
         }
-        return result.getStr("accessToken");
+
     }
 
     /**
@@ -92,17 +93,16 @@ public class DingtalkSSOServiceImpl implements DingtalkSSOService {
     private SsoUser getUserInfoByAccessToken(String accessToken) {
         String url = dingTalkProperties.getNewBaseApi() + dingTalkProperties.getContactUserApi();
         log.info("请求钉钉 getUserInfo, url={}", url);
-        HttpResponse response = HttpUtil.createGet(url)
+        JSONObject result;
+        try (HttpResponse response = HttpUtil.createGet(url)
                 .header("x-acs-dingtalk-access-token", accessToken)
-                .execute();
-
-        JSONObject result = JSONUtil.parseObj(response.body());
-        log.info("钉钉 getUserInfo 返回：{}", result);
-
-        if (result.containsKey("code") && !"0".equals(result.getStr("code"))) {
-            throw new RuntimeException("获取钉钉用户信息失败：" + result);
+                .execute()) {
+            result = JSONUtil.parseObj(response.body());
+            log.info("钉钉 getUserInfo 返回：{}", result);
+            if (result.containsKey("code") && !"0".equals(result.getStr("code"))) {
+                throw new RuntimeException("获取钉钉用户信息失败：" + result);
+            }
         }
-
         SsoUser ssoUser = new SsoUser();
         ssoUser.setName(result.getStr("nick"));
         ssoUser.setAvatar(result.getStr("avatarUrl"));

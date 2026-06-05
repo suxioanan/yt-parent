@@ -43,7 +43,7 @@ public class WechatTestController {
      * <p>GET /test/wechat/user/{userId}
      */
     @GetMapping("/user/{userId}")
-    public Map<String, Object> getUserByUserId(@PathVariable String userId) {
+    public Map<String, Object> getUserByUserId(@PathVariable("userId") String userId) {
         try {
             SsoUser user = wechatSSOService.getUserByUserId(userId);
             return Map.of("success", true, "data", user);
