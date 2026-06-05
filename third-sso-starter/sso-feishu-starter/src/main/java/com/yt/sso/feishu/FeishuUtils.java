@@ -20,17 +20,29 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class FeishuUtils {
 
-    /** token 有效期缓冲（提前 5 分钟过期） */
-    private static final long EXPIRE_MILLIS = 110 * 60 * 1000L;
 
-    private static volatile String appAccessToken;
-    private static volatile long appAccessTokenExpireAt = 0L;
 
-    private static volatile String tenantAccessToken;
-    private static volatile long tenantAccessTokenExpireAt = 0L;
+    /**
+     *
+     * * 获取 tenant_access_token（商店应用）
+     * * 应用管理相关接口
+     **/
+    private  volatile String appAccessToken;
+    private  volatile long appAccessTokenExpireAt = 0L;
 
-    private static final Object APP_LOCK = new Object();
-    private static final Object TENANT_LOCK = new Object();
+    /**
+     *
+     * 调用组织架构
+     * 用户
+     * 部门
+     * 通讯录
+     * 消息发送
+     **/
+    private  volatile String tenantAccessToken;
+    private  volatile long tenantAccessTokenExpireAt = 0L;
+
+    private  final Object lock = new Object();
+
 
     private final FeishuProperties feishuProperties;
 
@@ -44,7 +56,7 @@ public class FeishuUtils {
         if (appAccessToken != null && now < appAccessTokenExpireAt) {
             return appAccessToken;
         }
-        synchronized (TENANT_LOCK) {
+        synchronized (lock) {
             now = System.currentTimeMillis();
             if (appAccessToken != null && now < appAccessTokenExpireAt) {
                 return appAccessToken;
@@ -56,7 +68,7 @@ public class FeishuUtils {
             if (expiresIn == null) {
                 expiresIn = 5155L;
             }
-            //默认有个300毫秒的缓冲
+            //默认有个300秒的缓冲
             appAccessTokenExpireAt = System.currentTimeMillis() + (expiresIn - 300) * 1000;
             tenantAccessTokenExpireAt = System.currentTimeMillis() + (expiresIn - 300) * 1000;
             return appAccessToken;
@@ -71,7 +83,7 @@ public class FeishuUtils {
         if (tenantAccessToken != null && now < tenantAccessTokenExpireAt) {
             return tenantAccessToken;
         }
-        synchronized (TENANT_LOCK) {
+        synchronized (lock) {
             now = System.currentTimeMillis();
             if (tenantAccessToken != null && now < tenantAccessTokenExpireAt) {
                 return tenantAccessToken;

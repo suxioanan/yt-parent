@@ -59,7 +59,7 @@ public class WechatUtils {
             if (expiresIn == null) {
                 expiresIn = 7200L;
             }
-            //默认有个300毫秒的缓冲
+            //默认有个300秒的缓冲
             expireAt = System.currentTimeMillis() + (expiresIn - 300) * 1000;
             return accessToken;
         }
