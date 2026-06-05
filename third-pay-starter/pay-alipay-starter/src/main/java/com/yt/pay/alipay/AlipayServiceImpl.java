@@ -232,23 +232,30 @@ public class AlipayServiceImpl implements AlipayService {
 
     @Override
     public PayNotifyResult handleNotify(String body, Map<String, String> extra) {
+        String tradeStatus = extra.get("trade_status");
+        String outTradeNo = extra.get("out_trade_no");
+        if (tradeStatus == null || outTradeNo == null) {
+            throw new RuntimeException("支付宝回调缺少必填参数: trade_status=" + tradeStatus + ", out_trade_no=" + outTradeNo);
+        }
         try {
             boolean verified = AlipaySignature.rsaCheckV1(
                     extra, alipayPublicKeyContent, CHARSET, SIGN_TYPE);
             if (!verified) {
+                log.error("支付宝回调验签失败: outTradeNo={}", outTradeNo);
                 throw new RuntimeException("支付宝回调验签失败");
             }
             String totalAmountStr = extra.get("total_amount");
             return PayNotifyResult.builder()
-                    .outTradeNo(extra.get("out_trade_no"))
+                    .outTradeNo(outTradeNo)
                     .transactionId(extra.get("trade_no"))
-                    .status(convertStatus(extra.get("trade_status")))
+                    .status(convertStatus(tradeStatus))
                     .totalAmount(totalAmountStr != null ? new BigDecimal(totalAmountStr) : null)
                     .eventType(extra.get("event_type") != null
                             ? extra.get("event_type") : "payment")
                     .rawBody(body)
                     .build();
         } catch (AlipayApiException e) {
+            log.error("支付宝回调处理异常", e);
             throw new RuntimeException("支付宝回调处理异常: " + e.getMessage(), e);
         }
     }

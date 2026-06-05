@@ -194,11 +194,14 @@ public class WechatPayServiceImpl implements WechatPayService {
 
         Refund refund = refundService.create(createRequest);
         RefundStatus status = convertRefundStatus(refund.getStatus());
+        BigDecimal actualRefundAmount = refund.getAmount() != null && refund.getAmount().getRefund() != null
+                ? toYuan(refund.getAmount().getRefund())
+                : request.getRefundAmount();
         return RefundResult.builder()
                 .outRefundNo(refund.getOutRefundNo())
                 .refundId(refund.getRefundId())
                 .status(status)
-                .refundAmount(request.getRefundAmount())
+                .refundAmount(actualRefundAmount)
                 .success(status == RefundStatus.SUCCESS)
                 .build();
     }
