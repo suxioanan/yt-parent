@@ -94,7 +94,7 @@ public class FeishuUtils {
             if (expiresIn == null) {
                 expiresIn = 5155L;
             }
-            //默认有个300毫秒的缓冲
+            //默认有个300秒的缓冲
             tenantAccessTokenExpireAt = System.currentTimeMillis() + (expiresIn - 300) * 1000;
             return tenantAccessToken;
         }
