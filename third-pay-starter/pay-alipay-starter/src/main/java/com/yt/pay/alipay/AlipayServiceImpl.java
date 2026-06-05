@@ -18,6 +18,7 @@ import java.io.InputStream;
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 /**
@@ -62,7 +63,7 @@ public class AlipayServiceImpl implements AlipayService {
         AlipayTradePrecreateRequest req = new AlipayTradePrecreateRequest();
         JSONObject biz = new JSONObject();
         biz.put("out_trade_no", request.getOutTradeNo());
-        biz.put("total_amount", request.getTotalAmount().toString());
+        biz.put("total_amount", request.getTotalAmount().toPlainString());
         biz.put("subject", request.getDescription());
         if (request.getExpireMinutes() != null) {
             biz.put("timeout_express", request.getExpireMinutes() + "m");
@@ -87,7 +88,7 @@ public class AlipayServiceImpl implements AlipayService {
         AlipayTradePayRequest req = new AlipayTradePayRequest();
         JSONObject biz = new JSONObject();
         biz.put("out_trade_no", request.getOutTradeNo());
-        biz.put("total_amount", request.getTotalAmount().toString());
+        biz.put("total_amount", request.getTotalAmount().toPlainString());
         biz.put("subject", request.getDescription());
         biz.put("auth_code", request.getAuthCode());
         biz.put("scene", SCENE_BAR_CODE);
@@ -157,7 +158,7 @@ public class AlipayServiceImpl implements AlipayService {
         AlipayTradeRefundRequest req = new AlipayTradeRefundRequest();
         JSONObject biz = new JSONObject();
         biz.put("out_trade_no", request.getOutTradeNo());
-        biz.put("refund_amount", request.getRefundAmount().toString());
+        biz.put("refund_amount", request.getRefundAmount().toPlainString());
         biz.put("out_request_no", request.getOutRefundNo());
         if (request.getReason() != null) {
             biz.put("refund_reason", request.getReason());
@@ -165,13 +166,23 @@ public class AlipayServiceImpl implements AlipayService {
         req.setBizContent(biz.toString());
         try {
             AlipayTradeRefundResponse resp = alipayClient.execute(req);
-            boolean success = resp.isSuccess();
+            boolean apiSuccess = resp.isSuccess();
+            boolean fundChanged = "Y".equals(resp.getFundChange());
+            RefundStatus status;
+            if (apiSuccess && fundChanged) {
+                status = RefundStatus.SUCCESS;
+            } else if (apiSuccess) {
+                status = RefundStatus.PROCESSING;
+            } else {
+                status = RefundStatus.FAILED;
+            }
             return RefundResult.builder()
                     .outRefundNo(request.getOutRefundNo())
                     .refundId(request.getOutRefundNo())
-                    .status(success ? RefundStatus.SUCCESS : RefundStatus.FAILED)
-                    .refundAmount(request.getRefundAmount())
-                    .success(success)
+                    .status(status)
+                    .refundAmount(resp.getRefundFee() != null
+                            ? new BigDecimal(resp.getRefundFee()) : request.getRefundAmount())
+                    .success(status == RefundStatus.SUCCESS)
                     .build();
         } catch (AlipayApiException e) {
             throw new RuntimeException("支付宝退款异常: " + e.getMessage(), e);
@@ -241,7 +252,7 @@ public class AlipayServiceImpl implements AlipayService {
     private String readKeyContent(String path) {
         // 1. 尝试文件系统
         try {
-            return new String(Files.readAllBytes(Paths.get(path)));
+            return new String(Files.readAllBytes(Paths.get(path)), StandardCharsets.UTF_8);
         } catch (IOException ignored) {
             // fall through to classpath
             log.error("根据文件路径读取文件失败:{}",path);
@@ -252,7 +263,7 @@ public class AlipayServiceImpl implements AlipayService {
             if (in == null) {
                 throw new RuntimeException("密钥文件不存在（文件系统 + classpath 均未找到）: " + path);
             }
-            return new String(in.readAllBytes());
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {
             log.error("读取文件失败:{}",path);
             throw new RuntimeException("读取密钥文件失败: " + path, e);
@@ -265,6 +276,8 @@ public class AlipayServiceImpl implements AlipayService {
             case "TRADE_SUCCESS":
             case "TRADE_FINISHED":
                 return PayStatus.SUCCESS;
+            case "TRADE_REFUND":
+                return PayStatus.REFUND;
             case "TRADE_CLOSED":
                 return PayStatus.CLOSED;
             case "WAIT_BUYER_PAY":

@@ -23,6 +23,6 @@ public class PayRequest {
     private String description;
     /** 回调地址（覆盖配置默认值） */
     private String notifyUrl;
-    /** 过期时间（分钟），默认 5 */
-    private Integer expireMinutes = 5;
+    /** 过期时间（分钟），默认 30 */
+    private Integer expireMinutes = 30;
 }
