@@ -1,6 +1,7 @@
 package com.yt.pay;
 
 import com.yt.pay.model.*;
+
 import java.util.Map;
 
 /**
@@ -28,7 +29,7 @@ public interface PayService {
     /**
      * 退款查询
      * @param outTradeNo  原商户订单号
-     * @param outRefundNo 退款单号
+     * @param outRefundNo 退款单号（退款流水号 申请退款的时候 返回的）
      */
     RefundResult refundQuery(String outTradeNo, String outRefundNo);
 
@@ -38,4 +39,7 @@ public interface PayService {
      * @param extra 附加参数（微信为 HTTP Headers，支付宝为 URL Query Params）
      */
     PayNotifyResult handleNotify(String body, Map<String, String> extra);
+
+
+
 }

@@ -7,7 +7,6 @@ import com.wechat.pay.java.core.http.ApacheHttpClientBuilder;
 import com.wechat.pay.java.core.http.HttpClient;
 import com.wechat.pay.java.core.http.HttpHeaders;
 import com.wechat.pay.java.core.http.JsonRequestBody;
-import com.wechat.pay.java.core.notification.NotificationConfig;
 import com.wechat.pay.java.core.notification.NotificationParser;
 import com.wechat.pay.java.core.notification.RequestParam;
 import com.wechat.pay.java.service.payments.nativepay.NativePayService;
@@ -28,6 +27,8 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Map;
 
 /**
@@ -38,6 +39,12 @@ import java.util.Map;
 @Slf4j
 public class WechatPayServiceImpl implements WechatPayService {
 
+    private static final String CURRENCY_CNY = "CNY";
+
+    private static final String CONTENT_TYPE_JSON = "application/json";
+    private static final DateTimeFormatter ISO_OFFSET_DATETIME =
+            DateTimeFormatter.ISO_OFFSET_DATE_TIME;
+
     private final WechatPayProperties properties;
     private final Config config;
     private final NativePayService nativePayService;
@@ -47,15 +54,16 @@ public class WechatPayServiceImpl implements WechatPayService {
 
     public WechatPayServiceImpl(WechatPayProperties properties) {
         this.properties = properties;
-        this.config = new RSAAutoCertificateConfig.Builder()
+        RSAAutoCertificateConfig autoConfig = new RSAAutoCertificateConfig.Builder()
                 .merchantId(properties.getMerchantId())
                 .privateKeyFromPath(properties.getPrivateKeyPath())
                 .merchantSerialNumber(properties.getMerchantSerialNumber())
                 .apiV3Key(properties.getApiV3Key())
                 .build();
+        this.config = autoConfig;
         this.nativePayService = new NativePayService.Builder().config(config).build();
         this.refundService = new RefundService.Builder().config(config).build();
-        this.notificationParser = new NotificationParser((NotificationConfig) config);
+        this.notificationParser = new NotificationParser(autoConfig);
         this.httpClient = new ApacheHttpClientBuilder().config(config).build();
     }
 
@@ -63,7 +71,7 @@ public class WechatPayServiceImpl implements WechatPayService {
     public String generateQrCode(PayRequest request) {
         Amount amount = new Amount();
         amount.setTotal(Math.toIntExact(toFen(request.getTotalAmount())));
-        amount.setCurrency("CNY");
+        amount.setCurrency(CURRENCY_CNY);
 
         PrepayRequest prepayRequest = new PrepayRequest();
         prepayRequest.setAppid(properties.getAppId());
@@ -75,8 +83,8 @@ public class WechatPayServiceImpl implements WechatPayService {
                 ? request.getNotifyUrl() : properties.getNotifyUrl());
         if (request.getExpireMinutes() != null) {
             prepayRequest.setTimeExpire(
-                    java.time.OffsetDateTime.now().plusMinutes(request.getExpireMinutes())
-                            .format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME));
+                    OffsetDateTime.now().plusMinutes(request.getExpireMinutes())
+                            .format(ISO_OFFSET_DATETIME));
         }
 
         PrepayResponse response = nativePayService.prepay(prepayRequest);
@@ -95,14 +103,14 @@ public class WechatPayServiceImpl implements WechatPayService {
         body.put("description", request.getDescription());
         cn.hutool.json.JSONObject amt = new cn.hutool.json.JSONObject();
         amt.put("total", toFen(request.getTotalAmount()));
-        amt.put("currency", "CNY");
+        amt.put("currency", CURRENCY_CNY);
         body.put("amount", amt);
 
         String jsonBody = body.toString();
         log.info("微信付款码支付: outTradeNo={}", request.getOutTradeNo());
 
         HttpHeaders headers = new HttpHeaders();
-        headers.addHeader("Accept", "application/json");
+        headers.addHeader("Accept", CONTENT_TYPE_JSON);
         com.wechat.pay.java.core.http.HttpResponse<String> httpResp =
                 httpClient.post(headers,
                         properties.getPayCodeUrl(),
@@ -123,7 +131,8 @@ public class WechatPayServiceImpl implements WechatPayService {
                 .transactionId(result.getStr("transaction_id"))
                 .status(convertStatus(tradeState))
                 .totalAmount(result.get("amount") != null
-                        ? toYuan(result.getJSONObject("amount").getLong("total")) : request.getTotalAmount())
+                        ? toYuan(result.getJSONObject("amount").getLong("total"))
+                        : request.getTotalAmount())
                 .payerOpenid(result.getStr("openid"))
                 .rawResponse(respBody)
                 .success("SUCCESS".equals(tradeState))
@@ -166,7 +175,7 @@ public class WechatPayServiceImpl implements WechatPayService {
         AmountReq amountReq = new AmountReq();
         amountReq.setRefund(toFen(request.getRefundAmount()));
         amountReq.setTotal(toFen(request.getTotalAmount()));
-        amountReq.setCurrency("CNY");
+        amountReq.setCurrency(CURRENCY_CNY);
 
         CreateRequest createRequest = new CreateRequest();
         createRequest.setOutTradeNo(request.getOutTradeNo());
@@ -185,11 +194,18 @@ public class WechatPayServiceImpl implements WechatPayService {
                 .build();
     }
 
+    /**
+     * 微信支付 不用 outTradeNo 号进行查询 只是为了适配支付宝
+     * @author sunan
+     * @date 2026/6/5
+     * @param outTradeNo
+     * @param outRefundNo  outRefundNo退款返回的参数
+     * @return
+     **/
     @Override
     public RefundResult refundQuery(String outTradeNo, String outRefundNo) {
         QueryByOutRefundNoRequest request = new QueryByOutRefundNoRequest();
         request.setOutRefundNo(outRefundNo);
-
         Refund refund = refundService.queryByOutRefundNo(request);
         RefundStatus status = convertRefundStatus(refund.getStatus());
         return RefundResult.builder()
@@ -233,14 +249,11 @@ public class WechatPayServiceImpl implements WechatPayService {
                 .longValueExact();
     }
 
-    private BigDecimal toYuan(Integer fen) {
-        return fen == null ? null
-                : new BigDecimal(fen).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
-    }
-
-    private BigDecimal toYuan(Long fen) {
-        return fen == null ? null
-                : new BigDecimal(fen).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
+    /** 分 → 元，保留 2 位小数 */
+    private BigDecimal toYuan(Number fen) {
+        if (fen == null) return null;
+        return new BigDecimal(fen.toString())
+                .divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
     }
 
     private PayStatus convertStatus(String tradeState) {

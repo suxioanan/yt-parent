@@ -9,11 +9,12 @@ import com.alipay.api.DefaultAlipayClient;
 import com.alipay.api.internal.util.AlipaySignature;
 import com.alipay.api.request.*;
 import com.alipay.api.response.*;
-import com.yt.pay.model.*;
 import com.yt.pay.alipay.config.AlipayProperties;
+import com.yt.pay.model.*;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -27,23 +28,28 @@ import java.util.Map;
 @Slf4j
 public class AlipayServiceImpl implements AlipayService {
 
+    private static final String SIGN_TYPE = "RSA2";
+    private static final String FORMAT = "json";
+    private static final String CHARSET = "UTF-8";
+    private static final String SCENE_BAR_CODE = "bar_code";
+
     private final AlipayProperties properties;
     private final AlipayClient alipayClient;
     private final String alipayPublicKeyContent;
 
     public AlipayServiceImpl(AlipayProperties properties) {
         this.properties = properties;
-        String privateKeyContent = readKeyFile(properties.getPrivateKeyPath());
-        this.alipayPublicKeyContent = readKeyFile(properties.getAlipayPublicKeyPath());
+        String privateKeyContent = readKeyContent(properties.getPrivateKeyPath());
+        this.alipayPublicKeyContent = readKeyContent(properties.getAlipayPublicKeyPath());
 
         AlipayConfig config = new AlipayConfig();
         config.setServerUrl(properties.getGatewayUrl());
         config.setAppId(properties.getAppId());
         config.setPrivateKey(privateKeyContent);
         config.setAlipayPublicKey(alipayPublicKeyContent);
-        config.setFormat("json");
-        config.setCharset("UTF-8");
-        config.setSignType("RSA2");
+        config.setFormat(FORMAT);
+        config.setCharset(CHARSET);
+        config.setSignType(SIGN_TYPE);
         try {
             this.alipayClient = new DefaultAlipayClient(config);
         } catch (AlipayApiException e) {
@@ -84,7 +90,7 @@ public class AlipayServiceImpl implements AlipayService {
         biz.put("total_amount", request.getTotalAmount().toString());
         biz.put("subject", request.getDescription());
         biz.put("auth_code", request.getAuthCode());
-        biz.put("scene", "bar_code");
+        biz.put("scene", SCENE_BAR_CODE);
         req.setBizContent(biz.toString());
         try {
             AlipayTradePayResponse resp = alipayClient.execute(req);
@@ -162,7 +168,7 @@ public class AlipayServiceImpl implements AlipayService {
             boolean success = resp.isSuccess();
             return RefundResult.builder()
                     .outRefundNo(request.getOutRefundNo())
-                    .refundId(resp.getTradeNo())
+                    .refundId(request.getOutRefundNo())
                     .status(success ? RefundStatus.SUCCESS : RefundStatus.FAILED)
                     .refundAmount(request.getRefundAmount())
                     .success(success)
@@ -172,6 +178,15 @@ public class AlipayServiceImpl implements AlipayService {
         }
     }
 
+
+    /**
+     *
+     * @author sunan
+     * @date 2026/6/5
+     * @param outTradeNo  订单号
+     * @param outRefundNo  outRefundNo退款返回的参数
+     * @return
+     **/
     @Override
     public RefundResult refundQuery(String outTradeNo, String outRefundNo) {
         AlipayTradeFastpayRefundQueryRequest req = new AlipayTradeFastpayRefundQueryRequest();
@@ -184,7 +199,7 @@ public class AlipayServiceImpl implements AlipayService {
             boolean success = resp.isSuccess();
             return RefundResult.builder()
                     .outRefundNo(resp.getOutRequestNo())
-                    .refundId(resp.getTradeNo())
+                    .refundId(resp.getOutRequestNo() != null ? resp.getOutRequestNo() : outRefundNo)
                     .status(success ? RefundStatus.SUCCESS : RefundStatus.FAILED)
                     .refundAmount(resp.getRefundAmount() != null
                             ? new BigDecimal(resp.getRefundAmount()) : null)
@@ -199,15 +214,16 @@ public class AlipayServiceImpl implements AlipayService {
     public PayNotifyResult handleNotify(String body, Map<String, String> extra) {
         try {
             boolean verified = AlipaySignature.rsaCheckV1(
-                    extra, alipayPublicKeyContent, "UTF-8", "RSA2");
+                    extra, alipayPublicKeyContent, CHARSET, SIGN_TYPE);
             if (!verified) {
                 throw new RuntimeException("支付宝回调验签失败");
             }
+            String totalAmountStr = extra.get("total_amount");
             return PayNotifyResult.builder()
                     .outTradeNo(extra.get("out_trade_no"))
                     .transactionId(extra.get("trade_no"))
                     .status(convertStatus(extra.get("trade_status")))
-                    .totalAmount(new BigDecimal(extra.get("total_amount")))
+                    .totalAmount(totalAmountStr != null ? new BigDecimal(totalAmountStr) : null)
                     .eventType(extra.get("event_type") != null
                             ? extra.get("event_type") : "payment")
                     .rawBody(body)
@@ -217,10 +233,28 @@ public class AlipayServiceImpl implements AlipayService {
         }
     }
 
-    private String readKeyFile(String path) {
+    // ============ helpers ============
+
+    /**
+     * 读取密钥内容，优先从文件系统路径读取，失败则尝试 classpath
+     */
+    private String readKeyContent(String path) {
+        // 1. 尝试文件系统
         try {
             return new String(Files.readAllBytes(Paths.get(path)));
+        } catch (IOException ignored) {
+            // fall through to classpath
+            log.error("根据文件路径读取文件失败:{}",path);
+        }
+        // 2. 尝试 classpath
+        try (InputStream in = getClass().getClassLoader().getResourceAsStream(
+                path.startsWith("/") ? path.substring(1) : path)) {
+            if (in == null) {
+                throw new RuntimeException("密钥文件不存在（文件系统 + classpath 均未找到）: " + path);
+            }
+            return new String(in.readAllBytes());
         } catch (IOException e) {
+            log.error("读取文件失败:{}",path);
             throw new RuntimeException("读取密钥文件失败: " + path, e);
         }
     }
