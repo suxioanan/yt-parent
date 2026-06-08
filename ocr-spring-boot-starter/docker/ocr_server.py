@@ -19,6 +19,9 @@ import shutil
 import os
 import logging
 import urllib.request
+import socket
+import threading
+from urllib.parse import urlparse
 from logging.handlers import RotatingFileHandler
 
 # ============================================================
@@ -61,58 +64,197 @@ import re as _re
 PLATE_PATTERN_STR = r'^[' + ''.join(PLATE_PROVINCES) + r'][A-Z][A-Z0-9·\s]{4,7}$'
 PLATE_PATTERN = _re.compile(PLATE_PATTERN_STR)
 
+# ============================================================
+# 安全与限制常量
+# ============================================================
+MAX_DOWNLOAD_SIZE = 20 * 1024 * 1024   # URL 下载最大 20MB
+MAX_UPLOAD_SIZE = 50 * 1024 * 1024     # 文件上传最大 50MB
+DOWNLOAD_TIMEOUT = 30                    # URL 下载超时（秒）
+MAX_PDF_PAGES = 50                       # PDF 最大页数
+
+# 内网/私有 IP 段（SSRF 防护）
+# 永远禁止的危险地址（loopback、link-local、云元数据等）
+_BLOCKED_IP_PREFIXES = (
+    "127.",          # loopback
+    "169.254.",      # link-local / 云元数据 (AWS/阿里云等)
+    "0.",            # 0.0.0.0/8
+)
+
+# 默认禁止的私有地址段（可通过 SSRF_ALLOWED_NETS 环境变量逐条放开）
+_PRIVATE_IP_PREFIXES = (
+    "10.",           # A 类私有
+    "172.16.", "172.17.", "172.18.", "172.19.",
+    "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
+    "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
+    "192.168.",      # C 类私有
+    "100.64.", "100.65.", "100.66.", "100.67.", "100.68.", "100.69.",
+    "100.70.", "100.71.", "100.72.", "100.73.", "100.74.", "100.75.",
+    "100.76.", "100.77.", "100.78.", "100.79.", "100.80.", "100.81.",
+    "100.82.", "100.83.", "100.84.", "100.85.", "100.86.", "100.87.",
+    "100.88.", "100.89.", "100.90.", "100.91.", "100.92.", "100.93.",
+    "100.94.", "100.95.", "100.96.", "100.97.", "100.98.", "100.99.",
+    "100.100.", "100.101.", "100.102.", "100.103.", "100.104.", "100.105.",
+    "100.106.", "100.107.", "100.108.", "100.109.", "100.110.", "100.111.",
+    "100.112.", "100.113.", "100.114.", "100.115.", "100.116.", "100.117.",
+    "100.118.", "100.119.", "100.120.", "100.121.", "100.122.", "100.123.",
+    "100.124.", "100.125.", "100.126.", "100.127.",  # CGNAT
+)
+
+# SSRF 白名单：逗号分隔的 IP 前缀，匹配到的内网地址放行
+# 示例: "192.168.1.,10.0.0." — 允许访问 192.168.1.x 和 10.0.0.x 网段
+_SSRF_ALLOWED_NETS = tuple(
+    p.strip() for p in os.environ.get("SSRF_ALLOWED_NETS", "").split(",") if p.strip()
+)
+
+
+def _is_internal_ip(ip: str) -> bool:
+    """检查 IP 是否为应被禁止的内网地址。
+    永远禁止：loopback、link-local、0.x、IPv6 内网
+    默认禁止：10.x、172.16-31.x、192.168.x、100.64-127.x（可通过 SSRF_ALLOWED_NETS 逐条放开）
+    """
+    # IPv6 loopback / link-local / unique-local（永远禁止）
+    if ip in ("::1", "::") or ip.startswith(("fe80:", "fc", "fd")):
+        return True
+    # IPv4 危险地址（永远禁止）
+    for prefix in _BLOCKED_IP_PREFIXES:
+        if ip.startswith(prefix):
+            return True
+    # 优先检查白名单：匹配到则放行
+    for prefix in _SSRF_ALLOWED_NETS:
+        if ip.startswith(prefix):
+            return False
+    # IPv4 私有地址（默认禁止）
+    for prefix in _PRIVATE_IP_PREFIXES:
+        if ip.startswith(prefix):
+            return True
+    return False
+
+
+def _check_ssrf(hostname: str):
+    """解析域名全部 IP 地址，任一指向内网即拒绝（防御 DNS Rebinding）"""
+    # 先检查 hostname 本身是不是 IP（避免 DNS 解析绕过）
+    try:
+        import ipaddress
+        ipaddress.ip_address(hostname)
+        # hostname 本身是 IP，直接检查
+        if _is_internal_ip(hostname):
+            raise HTTPException(status_code=400, detail="Access to internal IP is forbidden")
+        return
+    except ValueError:
+        pass  # 不是 IP，继续 DNS 解析
+
+    try:
+        addrinfo = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        raise HTTPException(status_code=400, detail=f"Cannot resolve hostname: {hostname}")
+
+    for result in addrinfo:
+        ip = result[4][0]  # (family, type, proto, canonname, sockaddr)
+        if _is_internal_ip(ip):
+            raise HTTPException(status_code=400, detail="Access to internal IP is forbidden")
+
+
 app = FastAPI(title="PaddleOCR Multi-Model Server", version="1.0.0")
 
+
+@app.on_event("startup")
+def _warmup_models():
+    """后台预热 PP-Structure 模型，避免首次请求卡 10-20 秒"""
+    def _warmup():
+        logger.info("[Warmup] pre-loading PP-Structure engine...")
+        try:
+            get_structure_engine()
+            logger.info("[Warmup] PP-Structure engine ready")
+        except Exception as e:
+            logger.warning(f"[Warmup] PP-Structure pre-load failed: {e}")
+
+    threading.Thread(target=_warmup, daemon=True).start()
+
+
 # ============================================================
-# 模型全局实例（首次请求时懒加载）
+# 模型全局实例（首次请求时懒加载，双重检查锁保证线程安全）
 # ============================================================
-ocr_ch: PaddleOCR | None = None      # PP-OCRv4 中文
-ocr_plate: PaddleOCR | None = None   # 车牌识别
-structure_engine: PPStructure | None = None  # PP-Structure
+ocr_ch: PaddleOCR | None = None           # PP-OCRv4 中文
+ocr_plate: PaddleOCR | None = None        # 车牌识别
+structure_engine: PPStructure | None = None       # PP-Structure (含表格)
+_structure_no_table: PPStructure | None = None    # PP-Structure (不含表格，更快)
+
+_ocr_ch_lock = threading.Lock()
+_ocr_plate_lock = threading.Lock()
+_structure_lock = threading.Lock()
+_structure_no_table_lock = threading.Lock()
 
 
 def get_ocr_ch() -> PaddleOCR:
     global ocr_ch
-    if ocr_ch is None:
-        ocr_ch = PaddleOCR(
-            use_angle_cls=True,
-            lang="ch",
-            use_gpu=False,
-            show_log=False,
-            det_db_thresh=0.2,        # 默认 0.3
-            det_db_box_thresh=0.3,    # 默认 0.5
-            det_db_unclip_ratio=2.0,  # 默认 1.6
-        )
+    if ocr_ch is not None:
+        return ocr_ch
+    with _ocr_ch_lock:
+        if ocr_ch is None:
+            ocr_ch = PaddleOCR(
+                use_angle_cls=True,
+                lang="ch",
+                use_gpu=False,
+                show_log=False,
+                det_db_thresh=0.2,        # 默认 0.3
+                det_db_box_thresh=0.3,    # 默认 0.5
+                det_db_unclip_ratio=2.0,  # 默认 1.6
+            )
     return ocr_ch
 
 
 def get_ocr_plate() -> PaddleOCR:
     global ocr_plate
-    if ocr_plate is None:
-        ocr_plate = PaddleOCR(
-            use_angle_cls=True,
-            lang="ch",
-            use_gpu=False,     # GPU 时改 True
-            show_log=False,
-            det_db_thresh=0.15,       # 降低检测阈值，捕获省份小汉字
-            det_db_box_thresh=0.25,   # 降低框置信度阈值
-            det_db_unclip_ratio=2.0,  # 增大扩展比例
-            rec_image_shape="3, 48, 320",   # 车牌专用分辨率
-            max_text_length=10,             # 车牌号长度
-        )
+    if ocr_plate is not None:
+        return ocr_plate
+    with _ocr_plate_lock:
+        if ocr_plate is None:
+            ocr_plate = PaddleOCR(
+                use_angle_cls=True,
+                lang="ch",
+                use_gpu=False,     # GPU 时改 True
+                show_log=False,
+                det_db_thresh=0.15,       # 降低检测阈值，捕获省份小汉字
+                det_db_box_thresh=0.25,   # 降低框置信度阈值
+                det_db_unclip_ratio=2.0,  # 增大扩展比例
+                rec_image_shape="3, 48, 320",   # 车牌专用分辨率
+                max_text_length=10,             # 车牌号长度
+                drop_score=0.2,                 # 过滤低置信度检测框，对模糊车牌更友好
+            )
     return ocr_plate
 
 
-def get_structure_engine() -> PPStructure:
-    global structure_engine
-    if structure_engine is None:
-        structure_engine = PPStructure(
-            show_log=False,
-            lang="ch",
-            use_gpu=False,     # GPU 时改 True
-            ocr=True,
-        )
-    return structure_engine
+def get_structure_engine(extract_table: bool = True) -> PPStructure:
+    """获取 PP-Structure 引擎实例。
+    extract_table=False 时跳过表格识别，速度提升 3-5 倍，适合纯文档。
+    """
+    global structure_engine, _structure_no_table
+    if extract_table:
+        if structure_engine is not None:
+            return structure_engine
+        with _structure_lock:
+            if structure_engine is None:
+                structure_engine = PPStructure(
+                    show_log=False,
+                    lang="ch",
+                    use_gpu=False,     # GPU 时改 True
+                    ocr=True,
+                    table=True,
+                )
+        return structure_engine
+    else:
+        if _structure_no_table is not None:
+            return _structure_no_table
+        with _structure_no_table_lock:
+            if _structure_no_table is None:
+                _structure_no_table = PPStructure(
+                    show_log=False,
+                    lang="ch",
+                    use_gpu=False,
+                    ocr=True,
+                    table=False,        # 跳过表格识别，大幅提速
+                )
+        return _structure_no_table
 
 
 # ============================================================
@@ -134,46 +276,73 @@ PLATE_COLORS = {
 }
 
 
-def detect_plate_color(image_path: str) -> dict:
+def detect_plate_color(image_path: str, image: "np.ndarray | None" = None) -> dict:
     """
-    通过图片主色调分析车牌颜色
+    基于车牌中心区域 + 背景色投票识别车牌颜色。
+    策略：取中心 60% 排除边框，仅对蓝/绿/黄三色计数，
+    白色和黑色（字符/边框）不参与颜色投票，避免误判。
+    image: 可选的预加载图片 (BGR numpy array)，避免重复读图
     返回: {"type": "blue", "name": "蓝牌", "desc": "小型汽车"}
     """
     try:
         import cv2
         import numpy as np
 
-        img = cv2.imread(image_path)
+        if image is not None:
+            img = image
+        else:
+            img = cv2.imread(image_path)
         if img is None:
             return {"type": "unknown", "name": "未知", "desc": ""}
 
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        h, w = img.shape[:2]
 
-        # 定义各颜色 HSV 范围
+        # ---- 1. 只取中心 60% 区域，排除边框干扰 ----
+        cx1, cx2 = int(w * 0.2), int(w * 0.8)
+        cy1, cy2 = int(h * 0.2), int(h * 0.8)
+        if cx2 <= cx1 or cy2 <= cy1:
+            # 图太小，回退到全图
+            cx1, cx2, cy1, cy2 = 0, w, 0, h
+        center_region = img[cy1:cy2, cx1:cx2]
+        hsv = cv2.cvtColor(center_region, cv2.COLOR_BGR2HSV)
+
+        # ---- 2. 只对车牌背景色（蓝/绿/黄）投票，白/黑不参与 ----
         color_ranges = {
-            "blue": ([100, 43, 46], [130, 255, 255]),
-            "green": ([60, 43, 46], [90, 255, 255]),
-            "yellow": ([20, 43, 46], [40, 255, 255]),
-            "white": ([0, 0, 200], [180, 30, 255]),
-            "black": ([0, 0, 0], [180, 255, 46]),
+            "blue":   ([100, 43, 46], [130, 255, 255]),
+            "green":  ([60, 43, 46],  [90, 255, 255]),
+            "yellow": ([20, 43, 46],  [40, 255, 255]),
         }
 
-        max_pixels = 0
-        detected_color = "unknown"
+        color_pixels = {}
         for color_name, (lower, upper) in color_ranges.items():
             mask = cv2.inRange(hsv, np.array(lower), np.array(upper))
-            pixels = cv2.countNonZero(mask)
-            if pixels > max_pixels:
-                max_pixels = pixels
-                detected_color = color_name
+            color_pixels[color_name] = cv2.countNonZero(mask)
 
-        info = PLATE_COLORS.get(detected_color, {"name": "未知", "desc": ""})
-        return {
-            "type": detected_color,
-            "name": info["name"],
-            "desc": info["desc"],
-            "confidence": round(max_pixels / (img.shape[0] * img.shape[1]), 4),
-        }
+        total_center = (cx2 - cx1) * (cy2 - cy1)
+        max_color = max(color_pixels, key=color_pixels.get)
+        max_ratio = color_pixels[max_color] / total_center if total_center > 0 else 0
+
+        # ---- 3. 有足够背景色 → 直接判定 ----
+        if color_pixels[max_color] > 0 and max_ratio >= 0.05:
+            info = PLATE_COLORS.get(max_color, {"name": "未知", "desc": ""})
+            return {
+                "type": max_color,
+                "name": info["name"],
+                "desc": info["desc"],
+                "confidence": round(max_ratio, 4),
+            }
+
+        # ---- 4. 无彩色背景 → 回退判断白牌/黑牌 ----
+        white_mask = cv2.inRange(hsv, np.array([0, 0, 200]), np.array([180, 30, 255]))
+        black_mask = cv2.inRange(hsv, np.array([0, 0, 0]), np.array([180, 255, 46]))
+        white_px = cv2.countNonZero(white_mask)
+        black_px = cv2.countNonZero(black_mask)
+        if white_px > black_px and white_px / total_center >= 0.3:
+            return {"type": "white", "name": "白牌", "desc": "警车/军车", "confidence": round(white_px / total_center, 4)}
+        if black_px > white_px and black_px / total_center >= 0.3:
+            return {"type": "black", "name": "黑牌", "desc": "涉外车辆", "confidence": round(black_px / total_center, 4)}
+
+        return {"type": "unknown", "name": "未知", "desc": ""}
     except Exception as e:
         return {"type": "error", "name": "分析失败", "desc": str(e)}
 
@@ -265,6 +434,14 @@ def _convert_pdf_to_images(pdf_path: str, cleanup_pdf: bool = False) -> list[str
     doc = fitz.open(pdf_path)
     image_paths = []
 
+    # 大 PDF 防护：超过最大页数直接拒绝
+    if len(doc) > MAX_PDF_PAGES:
+        doc.close()
+        raise RuntimeError(
+            f"PDF has {len(doc)} pages, exceeding limit of {MAX_PDF_PAGES}. "
+            f"Please split the document or reduce resolution."
+        )
+
     try:
         for page_num in range(len(doc)):
             page = doc[page_num]
@@ -300,7 +477,7 @@ def _convert_pdf_to_images(pdf_path: str, cleanup_pdf: bool = False) -> list[str
 
 
 def save_upload(file: UploadFile) -> str:
-    """保存上传文件到临时目录，返回路径"""
+    """保存上传文件到临时目录，返回路径（含大小限制）"""
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
 
@@ -309,15 +486,46 @@ def save_upload(file: UploadFile) -> str:
         raise HTTPException(status_code=400, detail=f"Unsupported format: {suffix}")
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    shutil.copyfileobj(file.file, tmp)
-    tmp.close()
-    return tmp.name
+    try:
+        # 边写入边检查大小，防止超大文件打爆磁盘
+        total = 0
+        while True:
+            chunk = file.file.read(8192)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_UPLOAD_SIZE:
+                tmp.close()
+                os.remove(tmp.name)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large ({total} bytes received, max {MAX_UPLOAD_SIZE})"
+                )
+            tmp.write(chunk)
+        tmp.close()
+        return tmp.name
+    except HTTPException:
+        raise
+    except Exception:
+        tmp.close()
+        try:
+            os.remove(tmp.name)
+        except OSError:
+            pass
+        raise
 
 
 def download_url(url: str) -> str:
-    """下载 URL 图片到临时目录，返回路径"""
+    """下载 URL 图片到临时目录，返回路径（含 SSRF 防护、超时、流式下载+大小限制）"""
     if not url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Invalid URL")
+
+    hostname = urlparse(url).hostname
+    if not hostname:
+        raise HTTPException(status_code=400, detail="Invalid URL: cannot extract hostname")
+
+    # ---- SSRF 防护：getaddrinfo 解析全部 IP，任一为内网即拒绝 ----
+    _check_ssrf(hostname)
 
     suffix = os.path.splitext(url.split("?")[0])[-1].lower()
     if suffix not in ALLOWED_SUFFIXES:
@@ -326,18 +534,48 @@ def download_url(url: str) -> str:
     logger.info(f"Downloading image from URL: {url}")
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     try:
-        urllib.request.urlretrieve(url, tmp.name)
         tmp.close()
+        # 使用 urlopen 替代 urlretrieve，支持 timeout 和流式读取
+        req = urllib.request.Request(url, headers={"User-Agent": "OCR-Server/1.0"})
+        with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT) as response:
+            # 检查 Content-Length 头部
+            content_length = response.headers.get("Content-Length")
+            if content_length and int(content_length) > MAX_DOWNLOAD_SIZE:
+                os.remove(tmp.name)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File size ({content_length} bytes) exceeds maximum ({MAX_DOWNLOAD_SIZE})"
+                )
+            # 流式写入，边下边检查大小
+            downloaded = 0
+            with open(tmp.name, "wb") as f:
+                while True:
+                    chunk = response.read(8192)
+                    if not chunk:
+                        break
+                    downloaded += len(chunk)
+                    if downloaded > MAX_DOWNLOAD_SIZE:
+                        os.remove(tmp.name)
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Downloaded file too large (>{MAX_DOWNLOAD_SIZE} bytes)"
+                        )
+                    f.write(chunk)
         return tmp.name
+    except HTTPException:
+        raise
     except Exception as e:
-        os.remove(tmp.name)
+        try:
+            os.remove(tmp.name)
+        except OSError:
+            pass
         raise HTTPException(status_code=400, detail=f"Failed to download URL: {str(e)}")
 
 
-def run_ocr(ocr: PaddleOCR, image_path: str) -> dict:
-    """执行 OCR 识别，返回统一格式"""
+def run_ocr(ocr: PaddleOCR, image_path: str, cls: bool = True) -> dict:
+    """执行 OCR 识别，返回统一格式。cls=False 角度分类跳过可提速 20-30%"""
     try:
-        result = ocr.ocr(image_path, cls=True)
+        result = ocr.ocr(image_path, cls=cls)
         if not result or not result[0]:
             return {"success": True, "text": "", "items": []}
 
@@ -371,14 +609,15 @@ def run_ocr(ocr: PaddleOCR, image_path: str) -> dict:
 # 3. 对该区域做图像预处理（二值化 + 对比度增强）后重识别
 # 4. 对识别结果做省份模糊匹配
 
-def run_plate_ocr(image_path: str) -> dict:
+def run_plate_ocr(image_path: str, image: "np.ndarray | None" = None, cls: bool = True) -> dict:
     """
     车牌识别：PaddleOCR 识别 + 省份简称补全
+    image: 可选的预加载图片 (BGR numpy array)，避免重复读图
+    cls: 是否启用角度分类，False 可提速 20-30%
     """
-    import re as _re
 
     # 第一轮：全图 OCR
-    result = run_ocr(get_ocr_plate(), image_path)
+    result = run_ocr(get_ocr_plate(), image_path, cls=cls)
     plate_text = result.get("text", "").strip()
     first_line = plate_text.split("\n")[0].strip() if plate_text else ""
 
@@ -391,7 +630,7 @@ def run_plate_ocr(image_path: str) -> dict:
     plate_like = _re.sub(r"[^A-Z0-9·\s]", "", first_line).strip()
     if len(plate_like) >= 4:
         logger.info(f"[Plate] province missing, text={first_line!r}, plate_like={plate_like!r}")
-        province = _try_recover_province(image_path, first_line, result)
+        province = _try_recover_province(image_path, first_line, result, image=image)
         if province:
             full_plate = province + plate_like
             result["text"] = full_plate
@@ -403,16 +642,22 @@ def run_plate_ocr(image_path: str) -> dict:
     return result
 
 
-def _try_recover_province(image_path: str, first_line: str, result: dict) -> str | None:
+def _try_recover_province(image_path: str, first_line: str, result: dict,
+                        image: "np.ndarray | None" = None) -> str | None:
     """
     尝试从图片中恢复省份简称。
+    image: 可选的预加载图片 (BGR numpy array)，避免重复读图
     返回省份字符，或 None。
     """
     try:
         import cv2
         import numpy as np
 
-        img = cv2.imread(image_path)
+        # 优先使用传入的图片数组，减少重复读图
+        if image is not None:
+            img = image
+        else:
+            img = cv2.imread(image_path)
         if img is None:
             return None
 
@@ -447,21 +692,17 @@ def _try_recover_province(image_path: str, first_line: str, result: dict) -> str
         if province:
             return province
 
-        # 策略 3：全图二值化后重识别
+        # 策略 3：全图二值化后重识别（直接传数组，避免写临时文件）
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        binary_path = image_path + ".binary.jpg"
-        cv2.imwrite(binary_path, binary)
-        try:
-            binary_result = get_ocr_plate().ocr(binary_path, cls=True)
-            if binary_result and binary_result[0]:
-                for item in binary_result[0]:
-                    t = item[1][0].strip()
-                    for p in PLATE_PROVINCES:
-                        if p in t:
-                            return p
-        finally:
-            os.remove(binary_path)
+        binary_bgr = cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
+        binary_result = get_ocr_plate().ocr(binary_bgr, cls=True)
+        if binary_result and binary_result[0]:
+            for item in binary_result[0]:
+                t = item[1][0].strip()
+                for p in PLATE_PROVINCES:
+                    if p in t:
+                        return p
 
         return None
 
@@ -473,6 +714,7 @@ def _try_recover_province(image_path: str, first_line: str, result: dict) -> str
 def _ocr_province_region(region, label: str) -> str | None:
     """
     对指定区域做图像预处理后识别省份字符。
+    直接传递 numpy 数组给 PaddleOCR，避免 JPEG 编解码。
     """
     import cv2
     import numpy as np
@@ -490,36 +732,29 @@ def _ocr_province_region(region, label: str) -> str | None:
     ]
 
     for name, processed in candidates:
-        tmp_path = f"/tmp/plate_province_{name}.jpg"
-        cv2.imwrite(tmp_path, processed)
-        try:
-            ocr_result = get_ocr_plate().ocr(tmp_path, cls=True)
-            if ocr_result and ocr_result[0]:
-                for item in ocr_result[0]:
-                    t = item[1][0].strip()
-                    conf = item[1][1]
-                    # 直接匹配
-                    for p in PLATE_PROVINCES:
-                        if p in t:
-                            logger.info(
-                                f"[Plate] province found via {label}/{name}: "
-                                f"{p!r} (conf={conf:.4f}, text={t!r})"
-                            )
-                            return p
-                    # 模糊匹配
-                    if len(t) <= 2 and conf > 0.5:
-                        matched = _fuzzy_match_province(t)
-                        if matched:
-                            logger.info(
-                                f"[Plate] province fuzzy-matched via {label}/{name}: "
-                                f"{matched!r} from {t!r} (conf={conf:.4f})"
-                            )
-                            return matched
-        finally:
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
+        # PaddleOCR 直接接受 numpy 数组，无需写磁盘再读回
+        ocr_result = get_ocr_plate().ocr(processed, cls=True)
+        if ocr_result and ocr_result[0]:
+            for item in ocr_result[0]:
+                t = item[1][0].strip()
+                conf = item[1][1]
+                # 直接匹配
+                for p in PLATE_PROVINCES:
+                    if p in t:
+                        logger.info(
+                            f"[Plate] province found via {label}/{name}: "
+                            f"{p!r} (conf={conf:.4f}, text={t!r})"
+                        )
+                        return p
+                # 模糊匹配
+                if len(t) <= 2 and conf > 0.5:
+                    matched = _fuzzy_match_province(t)
+                    if matched:
+                        logger.info(
+                            f"[Plate] province fuzzy-matched via {label}/{name}: "
+                            f"{matched!r} from {t!r} (conf={conf:.4f})"
+                        )
+                        return matched
 
     return None
 
@@ -625,13 +860,14 @@ def home():
 
 @app.post("/ocr/ch")
 @app.post("/ocr/ch/url")
-async def ocr_chinese(
+def ocr_chinese(
         file: UploadFile = File(None),
         url: str = Query(None, description="图片 URL，与 file 二选一"),
+        cls: bool = Query(True, description="是否启用角度分类，身份证/截图等设为 false 可提速 20-30%"),
 ):
     """PP-OCRv4 中文通用文字识别"""
     if file:
-        logger.info(f"[PP-OCRv4] file={file.filename}")
+        logger.info(f"[PP-OCRv4] file={file.filename} cls={cls}")
         path = save_upload(file)
     elif url:
         path = download_url(url)
@@ -639,7 +875,7 @@ async def ocr_chinese(
         raise HTTPException(status_code=400, detail="Must provide 'file' or 'url'")
 
     try:
-        result = run_ocr(get_ocr_ch(), path)
+        result = run_ocr(get_ocr_ch(), path, cls=cls)
         logger.info(f"[PP-OCRv4] done, count={result.get('count', 0)}")
         return result
     finally:
@@ -648,13 +884,14 @@ async def ocr_chinese(
 
 @app.post("/ocr/plate")
 @app.post("/ocr/plate/url")
-async def ocr_license_plate(
+def ocr_license_plate(
         file: UploadFile = File(None),
         url: str = Query(None, description="图片 URL，与 file 二选一"),
+        cls: bool = Query(True, description="是否启用角度分类，设为 false 可提速 20-30%"),
 ):
     """车牌文字识别（优先 PaddleX 专用模型，回退 PaddleOCR）"""
     if file:
-        logger.info(f"[Plate] file={file.filename}")
+        logger.info(f"[Plate] file={file.filename} cls={cls}")
         path = save_upload(file)
     elif url:
         path = download_url(url)
@@ -662,10 +899,27 @@ async def ocr_license_plate(
         raise HTTPException(status_code=400, detail="Must provide 'file' or 'url'")
 
     try:
-        result = run_plate_ocr(path)
+        # 预加载图片到内存，后续各步骤复用，避免重复读图
+        import cv2
+        import numpy as np
+        img = cv2.imread(path)
+
+        result = run_plate_ocr(path, image=img, cls=cls)
         logger.info(f"[Plate] done, text={result.get('text', '')}, model={result.get('model', '')}")
-        # 同时返回颜色
-        color = detect_plate_color(path)
+
+        # 基于 OCR 检测框裁剪车牌区域后识别颜色，排除蓝天/绿树等背景干扰
+        plate_img = img  # 默认用整图
+        items = result.get("items", [])
+        if items and "box" in items[0]:
+            box = items[0]["box"]
+            xs = [box[i] for i in range(0, len(box), 2)]
+            ys = [box[i] for i in range(1, len(box), 2)]
+            x1, x2 = max(0, int(min(xs))), min(img.shape[1], int(max(xs)))
+            y1, y2 = max(0, int(min(ys))), min(img.shape[0], int(max(ys)))
+            if x2 > x1 and y2 > y1:
+                plate_img = img[y1:y2, x1:x2]
+
+        color = detect_plate_color(path, image=plate_img)
         result["plate_color"] = color
         return result
     finally:
@@ -674,9 +928,10 @@ async def ocr_license_plate(
 
 @app.post("/structure")
 @app.post("/structure/url")
-async def structure_analysis(
+def structure_analysis(
         file: UploadFile = File(None),
         url: str = Query(None, description="图片 URL，与 file 二选一"),
+        extract_table: bool = Query(True, description="是否提取表格，纯文档设为 false 可提速 3-5x"),
 ):
     """
     PP-Structure 文档结构分析
@@ -717,7 +972,7 @@ async def structure_analysis(
 
     # ----- 文档结构分析（逐页处理） -----
     all_items = []
-    engine = get_structure_engine()
+    engine = get_structure_engine(extract_table=extract_table)
 
     try:
         for img_path in image_paths:
@@ -784,7 +1039,7 @@ async def structure_analysis(
 
 @app.post("/convert/docx-to-pdf")
 @app.post("/convert/docx-to-pdf/url")
-async def convert_docx_to_pdf(
+def convert_docx_to_pdf(
         file: UploadFile = File(None),
         url: str = Query(None, description="Word 文档 URL，与 file 二选一"),
         background_tasks: BackgroundTasks = None,

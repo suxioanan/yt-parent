@@ -1,0 +1,161 @@
+1. 最大性能问题：OCR 模型线程安全
+
+你现在：
+ocr_ch = PaddleOCR(...)
+ocr_plate = PaddleOCR(...)
+structure_engine = PPStructure(...)
+然后多个请求共用。
+
+FastAPI + Uvicorn：
+worker=1
+没事。
+
+如果：
+uvicorn main:app --workers 4
+或者
+uvicorn main:app --workers 4
+高并发下可能出现：
+PaddlePredictor RuntimeError
+Segmentation fault
+因为 PaddleOCR 底层 Predictor 不是绝对线程安全。
+推荐：
+from threading import local
+
+_thread_local = local()
+
+def get_ocr_ch():
+    if not hasattr(_thread_local, "ocr_ch"):
+        _thread_local.ocr_ch = PaddleOCR(...)
+    return _thread_local.ocr_ch
+变成：
+每线程一个 OCR 实例 稳定很多。
+2. download_url 实际没有超时
+
+你定义：
+DOWNLOAD_TIMEOUT = 30
+但没用。
+
+现在：
+urllib.request.urlretrieve(url, tmp.name) 可能卡死
+建议改：
+import requests
+
+with requests.get(
+        url,
+        stream=True,
+        timeout=(5,30)
+) as r:
+边下载边判断：MAX_DOWNLOAD_SIZE
+超过立即终止。
+
+例如：
+size = 0
+
+for chunk in r.iter_content(8192):
+    size += len(chunk)
+
+    if size > MAX_DOWNLOAD_SIZE:
+        raise HTTPException(...)
+3. SSRF 防护不完整
+
+现在：
+socket.gethostbyname(hostname)
+只能解析：A记录
+但是：
+IPv6
+DNS Rebinding
+多IP
+都能绕过。
+建议：socket.getaddrinfo()
+全部解析：for result in socket.getaddrinfo(hostname, None):
+4. save_upload 没有限制上传大小
+攻击者：20GB pdf 直接打爆磁盘。
+建议：FastAPI Middleware：
+MAX_UPLOAD_SIZE = 50 * 1024 * 1024
+检查：content-length 或者 copyfileobj 时统计大小
+5. 车牌颜色识别误判率高
+你现在： 整张图 HSV
+例如：
+蓝天
+绿色树木
+黄色出租车
+都会影响效果，
+建议 OCR 检测框裁剪后识别颜色。 即车牌区域而不是整张图
+类似：plate_roi = img[y1:y2, x1:x2]
+然后：detect_plate_color(plate_roi) 准确率会提升很多
+6. OCR结果拼接有问题
+当前：full_text = "\n".join(...)
+会出现：
+姓名
+张三
+
+手机号
+138xxxx
+结构丢失
+建议
+{
+    "lines":[]
+}
+例如：
+[
+  {
+    "text":"姓名",
+    "bbox":[]
+  },
+  {
+    "text":"张三",
+    "bbox":[]
+  }
+]
+7. PDF转图片内存会炸
+现在：200 DPI
+假设：50页 A4 可能 2~4GB内存
+建议动态 DPI：dpi = min(200, max(120, 5000/page_width)) 或者：150 DPI
+8. PPStructure 是最大性能杀手
+目前：
+engine = PPStructure(
+    ocr=True
+)
+一次请求： 20页PDF 可能 40~60秒 很正常
+建议增加参数：
+@app.post("/structure")
+def structure_analysis(
+    ...
+    extract_table: bool = False
+)
+然后
+PPStructure(
+    layout=True,
+    table=extract_table
+)
+普通文档不要跑 table。
+
+速度能提升 3~5 倍。
+9. OCR接口建议增加参数
+现在固定：
+cls=True
+实际上很多图片：
+身份证
+发票
+截图
+根本不用角度分类。
+可以 POST /ocr/ch?cls=false
+ocr.ocr(path, cls=cls)
+速度直接提升 20%-30%。
+10. 最大优化（推荐）
+你现在 PaddleOCR 模型是PP-OCRv4 如果是中文业务建议直接
+PP-OCRv5_server_rec
+PP-OCRv5_server_det
+识别率明显提升。
+
+新版 PaddleOCR：
+ocr = PaddleOCR(
+    ocr_version="PP-OCRv5"
+)
+尤其对：模糊截图 低分辨率图片 车牌 扫描件 提升非常明显。
+
+
+
+
+
+

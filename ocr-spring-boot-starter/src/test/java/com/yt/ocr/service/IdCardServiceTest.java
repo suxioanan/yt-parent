@@ -1,14 +1,13 @@
 package com.yt.ocr.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.yt.ocr.model.OcrResult;
-import com.yt.ocr.model.PlateResult;
 import com.yt.ocr.client.OcrClient;
 import com.yt.ocr.config.OcrProperties;
 import com.yt.ocr.model.IdCardResult;
+import com.yt.ocr.model.OcrResult;
+import com.yt.ocr.model.PlateResult;
 import com.yt.ocr.model.StructureResult;
 import com.yt.ocr.service.impl.*;
-import com.yt.third.ocr.service.impl.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
