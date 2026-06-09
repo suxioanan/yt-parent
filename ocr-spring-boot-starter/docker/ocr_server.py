@@ -103,6 +103,7 @@ _PRIVATE_IP_PREFIXES = (
 
 # SSRF 白名单：逗号分隔的 IP 前缀，匹配到的内网地址放行
 # 示例: "192.168.1.,10.0.0." — 允许访问 192.168.1.x 和 10.0.0.x 网段
+# 特殊值: "0.0.0.0" — 允许所有 IP（禁用 SSRF 防护）
 _SSRF_ALLOWED_NETS = tuple(
     p.strip() for p in os.environ.get("SSRF_ALLOWED_NETS", "").split(",") if p.strip()
 )
@@ -112,7 +113,12 @@ def _is_internal_ip(ip: str) -> bool:
     """检查 IP 是否为应被禁止的内网地址。
     永远禁止：loopback、link-local、0.x、IPv6 内网
     默认禁止：10.x、172.16-31.x、192.168.x、100.64-127.x（可通过 SSRF_ALLOWED_NETS 逐条放开）
+    特殊值：SSRF_ALLOWED_NETS 包含 "0.0.0.0" 时允许所有 IP
     """
+    # 特殊值：如果白名单包含 "0.0.0.0"，则允许所有 IP（禁用 SSRF 防护）
+    if "0.0.0.0" in _SSRF_ALLOWED_NETS:
+        return False
+
     # IPv6 loopback / link-local / unique-local（永远禁止）
     if ip in ("::1", "::") or ip.startswith(("fe80:", "fc", "fd")):
         return True
@@ -534,6 +540,7 @@ def download_url(url: str) -> str:
 
     logger.info(f"Downloading image from URL: {url}")
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp_created = True
     try:
         tmp.close()
         # 使用 urlopen 替代 urlretrieve，支持 timeout 和流式读取
@@ -542,7 +549,6 @@ def download_url(url: str) -> str:
             # 检查 Content-Length 头部
             content_length = response.headers.get("Content-Length")
             if content_length and int(content_length) > MAX_DOWNLOAD_SIZE:
-                os.remove(tmp.name)
                 raise HTTPException(
                     status_code=400,
                     detail=f"File size ({content_length} bytes) exceeds maximum ({MAX_DOWNLOAD_SIZE})"
@@ -556,21 +562,24 @@ def download_url(url: str) -> str:
                         break
                     downloaded += len(chunk)
                     if downloaded > MAX_DOWNLOAD_SIZE:
-                        os.remove(tmp.name)
                         raise HTTPException(
                             status_code=400,
                             detail=f"Downloaded file too large (>{MAX_DOWNLOAD_SIZE} bytes)"
                         )
                     f.write(chunk)
+        tmp_created = False  # 成功，不要在 finally 中删除
         return tmp.name
     except HTTPException:
         raise
     except Exception as e:
-        try:
-            os.remove(tmp.name)
-        except OSError:
-            pass
         raise HTTPException(status_code=400, detail=f"Failed to download URL: {str(e)}")
+    finally:
+        # 确保在所有异常情况下都能清理临时文件
+        if tmp_created:
+            try:
+                os.remove(tmp.name)
+            except OSError:
+                pass
 
 
 def run_ocr(ocr: PaddleOCR, image_path: str, cls: bool = True) -> dict:
@@ -1060,15 +1069,53 @@ def convert_docx_to_pdf(
             if not url.startswith(("http://", "https://")):
                 raise HTTPException(status_code=400, detail="Invalid URL")
 
+            # SSRF 防护
+            hostname = urlparse(url).hostname
+            if not hostname:
+                raise HTTPException(status_code=400, detail="Invalid URL: cannot extract hostname")
+            _check_ssrf(hostname)
+
             suffix = os.path.splitext(url.split("?")[0])[-1].lower()
             if suffix not in {".doc", ".docx"}:
                 suffix = ".docx"
 
+            # 使用安全的下载方式
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-            urllib.request.urlretrieve(url, tmp.name)
-            docx_path = tmp.name
-            tmp.close()
-            downloaded = True
+            try:
+                tmp.close()
+                req = urllib.request.Request(url, headers={"User-Agent": "OCR-Server/1.0"})
+                with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT) as response:
+                    content_length = response.headers.get("Content-Length")
+                    if content_length and int(content_length) > MAX_DOWNLOAD_SIZE:
+                        os.remove(tmp.name)
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"File size ({content_length} bytes) exceeds maximum ({MAX_DOWNLOAD_SIZE})"
+                        )
+                    downloaded_size = 0
+                    with open(tmp.name, "wb") as f:
+                        while True:
+                            chunk = response.read(8192)
+                            if not chunk:
+                                break
+                            downloaded_size += len(chunk)
+                            if downloaded_size > MAX_DOWNLOAD_SIZE:
+                                os.remove(tmp.name)
+                                raise HTTPException(
+                                    status_code=400,
+                                    detail=f"Downloaded file too large (>{MAX_DOWNLOAD_SIZE} bytes)"
+                                )
+                            f.write(chunk)
+                docx_path = tmp.name
+                downloaded = True
+            except HTTPException:
+                raise
+            except Exception as e:
+                try:
+                    os.remove(tmp.name)
+                except OSError:
+                    pass
+                raise HTTPException(status_code=400, detail=f"Failed to download URL: {str(e)}")
 
         # 上传文件
         elif file:
