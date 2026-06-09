@@ -203,9 +203,11 @@ def get_ocr_ch() -> PaddleOCR:
                 lang="ch",
                 use_gpu=False,
                 show_log=False,
-                det_db_thresh=0.2,        # 默认 0.3
-                det_db_box_thresh=0.3,    # 默认 0.5
-                det_db_unclip_ratio=2.0,  # 默认 1.6
+                # 使用默认检测阈值，避免过度敏感产生伪检（如"尹涛"→"尹涛小"）
+                det_db_thresh=0.3,
+                det_db_box_thresh=0.5,
+                det_db_unclip_ratio=1.6
+                drop_score=0.5,           # 过滤低置信度文本行
             )
     return ocr_ch
 
