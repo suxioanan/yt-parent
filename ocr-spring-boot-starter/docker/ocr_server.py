@@ -11,13 +11,41 @@ API:
   POST /convert/docx-to-pdf  docx/docx -> PDF 转换
 """
 
+import os
+
+# ============================================================
+# HyperLPR3 模型目录配置
+# 优先使用环境变量 HYPERLPR3_MODEL_DIR，默认利用已有的 ./models 挂载路径
+# Docker 中 docker-compose 将宿主机 ./models/ 挂载到了 /root/.paddleocr/whl/
+# ============================================================
+_HYPERLPR3_MODEL_DIR = os.environ.get(
+    "HYPERLPR3_MODEL_DIR",
+    os.path.join("/root", ".paddleocr", "whl", "hyperlpr3"),
+)
+
+# 如果自定义目录已有模型，预创建默认目录让 initialization() 跳过下载
+if os.path.isdir(os.path.join(_HYPERLPR3_MODEL_DIR, "20230229", "onnx")):
+    try:
+        os.makedirs(os.path.expanduser("~/.hyperlpr3/20230229"), exist_ok=True)
+    except Exception:
+        pass
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Query, BackgroundTasks
 from fastapi.responses import FileResponse
 from paddleocr import PaddleOCR, PPStructure
+from hyperlpr3 import LicensePlateCatcher
+# hyperlpr3 plate_type 常量（整数）
+# BLUE=0, YELLOW_SINGLE=1, WHILE_SINGLE=2, GREEN=3, BLACK_HK_MACAO=4,
+# HK_SINGLE=5, HK_DOUBLE=6, MACAO_SINGLE=7, MACAO_DOUBLE=8, YELLOW_DOUBLE=9
+from hyperlpr3 import BLUE as _LPR_BLUE
+from hyperlpr3 import GREEN as _LPR_GREEN
+from hyperlpr3 import YELLOW_SINGLE as _LPR_YELLOW_SINGLE
+from hyperlpr3 import YELLOW_DOUBLE as _LPR_YELLOW_DOUBLE
+from hyperlpr3 import WHILE_SINGLE as _LPR_WHITE_SINGLE
+from hyperlpr3 import BLACK_HK_MACAO as _LPR_BLACK
 import uvicorn
 import tempfile
 import shutil
-import os
 import logging
 import urllib.request
 import socket
@@ -182,12 +210,12 @@ def _warmup_models():
 # 模型全局实例（首次请求时懒加载，双重检查锁保证线程安全）
 # ============================================================
 ocr_ch: PaddleOCR | None = None           # PP-OCRv4 中文
-ocr_plate: PaddleOCR | None = None        # 车牌识别
+_lpr_catcher: LicensePlateCatcher | None = None  # HyperLPR3 车牌专用识别
 structure_engine: PPStructure | None = None       # PP-Structure (含表格)
 _structure_no_table: PPStructure | None = None    # PP-Structure (不含表格，更快)
 
 _ocr_ch_lock = threading.Lock()
-_ocr_plate_lock = threading.Lock()
+_lpr_lock = threading.Lock()
 _structure_lock = threading.Lock()
 _structure_no_table_lock = threading.Lock()
 
@@ -203,34 +231,39 @@ def get_ocr_ch() -> PaddleOCR:
                 lang="ch",
                 use_gpu=False,
                 show_log=False,
-                # 使用默认检测阈值，避免过度敏感产生伪检（如"尹涛"→"尹涛小"）
+                # 身份证等通用场景：使用默认检测阈值，避免过度敏感产生伪检
                 det_db_thresh=0.3,
                 det_db_box_thresh=0.5,
-                det_db_unclip_ratio=1.6
+                det_db_unclip_ratio=1.6,
                 drop_score=0.5,           # 过滤低置信度文本行
             )
     return ocr_ch
 
 
-def get_ocr_plate() -> PaddleOCR:
-    global ocr_plate
-    if ocr_plate is not None:
-        return ocr_plate
-    with _ocr_plate_lock:
-        if ocr_plate is None:
-            ocr_plate = PaddleOCR(
-                use_angle_cls=True,
-                lang="ch",
-                use_gpu=False,     # GPU 时改 True
-                show_log=False,
-                det_db_thresh=0.15,       # 降低检测阈值，捕获省份小汉字
-                det_db_box_thresh=0.25,   # 降低框置信度阈值
-                det_db_unclip_ratio=2.0,  # 增大扩展比例
-                rec_image_shape="3, 48, 320",   # 车牌专用分辨率
-                max_text_length=10,             # 车牌号长度
-                drop_score=0.2,                 # 过滤低置信度检测框，对模糊车牌更友好
+def get_lpr_catcher() -> LicensePlateCatcher:
+    """HyperLPR3 车牌专用识别模型，专为车牌场景训练，识别准确率远超通用OCR"""
+    global _lpr_catcher
+    if _lpr_catcher is not None:
+        return _lpr_catcher
+    with _lpr_lock:
+        if _lpr_catcher is None:
+            # 优先使用自定义模型目录（宿主机预下载挂载），
+            # 目录不存在则回退到默认 ~/.hyperlpr3，由 initialization() 自动下载
+            model_dir = _HYPERLPR3_MODEL_DIR
+            if not os.path.exists(os.path.join(model_dir, "20230229", "onnx")):
+                # 导入 hyperlpr3 时 initialization() 已自动下载到默认目录
+                from hyperlpr3.config.settings import _DEFAULT_FOLDER_
+                model_dir = _DEFAULT_FOLDER_
+                logger.info(f"[HyperLPR3] model not found at {_HYPERLPR3_MODEL_DIR!r}, "
+                            f"using default {model_dir!r}")
+            else:
+                logger.info(f"[HyperLPR3] using pre-downloaded model at {model_dir!r}")
+
+            _lpr_catcher = LicensePlateCatcher(
+                folder=model_dir,
+                detect_level="high",
             )
-    return ocr_plate
+    return _lpr_catcher
 
 
 def get_structure_engine(extract_table: bool = True) -> PPStructure:
@@ -275,6 +308,16 @@ def get_structure_engine(extract_table: bool = True) -> PPStructure:
 #   绿牌 — 新能源汽车
 #   白牌 — 警车、军车
 #   黑牌 — 涉外车辆
+
+# HyperLPR3 plate_type 整数 → 颜色名称映射
+_LPR_COLOR_MAP = {
+    _LPR_BLUE: "blue",
+    _LPR_GREEN: "green",
+    _LPR_YELLOW_SINGLE: "yellow",
+    _LPR_YELLOW_DOUBLE: "yellow",
+    _LPR_WHITE_SINGLE: "white",
+    _LPR_BLACK: "black",
+}
 
 PLATE_COLORS = {
     "blue": {"name": "蓝牌", "desc": "小型汽车"},
@@ -623,22 +666,70 @@ def run_ocr(ocr: PaddleOCR, image_path: str, cls: bool = True) -> dict:
 
 def run_plate_ocr(image_path: str, image: "np.ndarray | None" = None, cls: bool = True) -> dict:
     """
-    车牌识别：PaddleOCR 识别 + 省份简称补全
+    车牌识别：HyperLPR3 专用车牌识别模型（高精度）
+    回退：HyperLPR3 未检测到车牌时，使用 PaddleOCR + 省份补全
     image: 可选的预加载图片 (BGR numpy array)，避免重复读图
-    cls: 是否启用角度分类，False 可提速 20-30%
+    cls: 保留参数，HyperLPR3 不需要此参数
     """
+    import cv2
+    import numpy as np
 
-    # 第一轮：全图 OCR
-    result = run_ocr(get_ocr_plate(), image_path, cls=cls)
+    try:
+        catcher = get_lpr_catcher()
+        lpr_results = catcher(image_path)
+
+        if lpr_results and len(lpr_results) > 0:
+            # HyperLPR3 成功检测到车牌
+            # to_result() 返回: [plate_code, rec_confidence, plate_type, det_bound_box]
+            best = lpr_results[0]
+            plate_text = str(best[0])
+            confidence = round(float(best[1]), 4)
+            plate_type = int(best[2])
+            bbox = best[3]  # [x1, y1, x2, y2] 像素坐标
+            box_8 = [
+                float(bbox[0]), float(bbox[1]),
+                float(bbox[2]), float(bbox[1]),
+                float(bbox[2]), float(bbox[3]),
+                float(bbox[0]), float(bbox[3]),
+            ]
+
+            # 车牌颜色
+            color_type = _LPR_COLOR_MAP.get(plate_type, "unknown")
+            color_info = PLATE_COLORS.get(color_type, {"name": "未知", "desc": ""})
+
+            logger.info(f"[Plate] HyperLPR3 detected: {plate_text}, type={plate_type}, conf={confidence}")
+
+            return {
+                "success": True,
+                "text": plate_text,
+                "items": [{
+                    "text": plate_text,
+                    "confidence": confidence,
+                    "box": box_8,
+                }],
+                "count": 1,
+                "model": "hyperlpr3",
+                "plate_color": {
+                    "type": color_type,
+                    "name": color_info["name"],
+                    "desc": color_info["desc"],
+                    "confidence": confidence,
+                },
+            }
+    except Exception as e:
+        logger.warning(f"[Plate] HyperLPR3 failed, falling back to PaddleOCR: {e}")
+
+    # ---- 回退：HyperLPR3 未检测到车牌，使用 PaddleOCR + 省份补全 ----
+    result = run_ocr(get_ocr_ch(), image_path, cls=cls)
     plate_text = result.get("text", "").strip()
     first_line = plate_text.split("\n")[0].strip() if plate_text else ""
 
     # 检查是否已经是完整车牌
     if PLATE_PATTERN.match(first_line):
-        result["model"] = "paddleocr"
+        result["model"] = "paddleocr-fallback"
         return result
 
-    # 第一行看起来像车牌（含字母数字）但缺少省份简称
+    # 第一行看起来像车牌但可能缺少省份
     plate_like = _re.sub(r"[^A-Z0-9·\s]", "", first_line).strip()
     if len(plate_like) >= 4:
         logger.info(f"[Plate] province missing, text={first_line!r}, plate_like={plate_like!r}")
@@ -650,7 +741,7 @@ def run_plate_ocr(image_path: str, image: "np.ndarray | None" = None, cls: bool 
                 result["items"][0]["text"] = full_plate
             logger.info(f"[Plate] province fixed: {first_line} -> {full_plate}")
 
-    result["model"] = "paddleocr"
+    result["model"] = "paddleocr-fallback"
     return result
 
 
@@ -708,7 +799,7 @@ def _try_recover_province(image_path: str, first_line: str, result: dict,
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         binary_bgr = cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
-        binary_result = get_ocr_plate().ocr(binary_bgr, cls=True)
+        binary_result = get_ocr_ch().ocr(binary_bgr, cls=True)
         if binary_result and binary_result[0]:
             for item in binary_result[0]:
                 t = item[1][0].strip()
@@ -745,7 +836,7 @@ def _ocr_province_region(region, label: str) -> str | None:
 
     for name, processed in candidates:
         # PaddleOCR 直接接受 numpy 数组，无需写磁盘再读回
-        ocr_result = get_ocr_plate().ocr(processed, cls=True)
+        ocr_result = get_ocr_ch().ocr(processed, cls=True)
         if ocr_result and ocr_result[0]:
             for item in ocr_result[0]:
                 t = item[1][0].strip()
@@ -901,7 +992,7 @@ def ocr_license_plate(
         url: str = Query(None, description="图片 URL，与 file 二选一"),
         cls: bool = Query(True, description="是否启用角度分类，设为 false 可提速 20-30%"),
 ):
-    """车牌文字识别（优先 PaddleX 专用模型，回退 PaddleOCR）"""
+    """车牌文字识别（HyperLPR3 专用模型，回退 PaddleOCR）"""
     if file:
         logger.info(f"[Plate] file={file.filename} cls={cls}")
         path = save_upload(file)
@@ -919,20 +1010,21 @@ def ocr_license_plate(
         result = run_plate_ocr(path, image=img, cls=cls)
         logger.info(f"[Plate] done, text={result.get('text', '')}, model={result.get('model', '')}")
 
-        # 基于 OCR 检测框裁剪车牌区域后识别颜色，排除蓝天/绿树等背景干扰
-        plate_img = img  # 默认用整图
-        items = result.get("items", [])
-        if items and "box" in items[0]:
-            box = items[0]["box"]
-            xs = [box[i] for i in range(0, len(box), 2)]
-            ys = [box[i] for i in range(1, len(box), 2)]
-            x1, x2 = max(0, int(min(xs))), min(img.shape[1], int(max(xs)))
-            y1, y2 = max(0, int(min(ys))), min(img.shape[0], int(max(ys)))
-            if x2 > x1 and y2 > y1:
-                plate_img = img[y1:y2, x1:x2]
-
-        color = detect_plate_color(path, image=plate_img)
-        result["plate_color"] = color
+        # 如果 HyperLPR3 已经提供了颜色信息，直接使用
+        if "plate_color" not in result:
+            # 回退到基于 OCR 检测框裁剪车牌区域后识别颜色
+            plate_img = img
+            items = result.get("items", [])
+            if items and "box" in items[0]:
+                box = items[0]["box"]
+                xs = [box[i] for i in range(0, len(box), 2)]
+                ys = [box[i] for i in range(1, len(box), 2)]
+                x1, x2 = max(0, int(min(xs))), min(img.shape[1], int(max(xs)))
+                y1, y2 = max(0, int(min(ys))), min(img.shape[0], int(max(ys)))
+                if x2 > x1 and y2 > y1:
+                    plate_img = img[y1:y2, x1:x2]
+            color = detect_plate_color(path, image=plate_img)
+            result["plate_color"] = color
         return result
     finally:
         os.remove(path)

@@ -13,4 +13,8 @@ python-multipart==0.0.20
 Pillow>=10.0.0
 PyMuPDF>=1.25.0
 
+# 车牌专用识别模型（替代 PaddleOCR 识别车牌）
+hyperlpr3>=0.1.0
+onnxruntime>=1.14.0
+
 # 省份简称补全已内置在 ocr_server.py 中，不再依赖 PaddleX
