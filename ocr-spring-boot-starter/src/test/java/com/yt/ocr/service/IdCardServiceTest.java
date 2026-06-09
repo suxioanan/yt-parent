@@ -56,39 +56,22 @@ class IdCardServiceTest {
         OcrChineseService ocrChineseService=new OcrChineseService(ocrClient, props);
         WordToPdfService wordToPdfService = new WordToPdfService(ocrClient, props);
 
-        String path = "/Users/sunan/Downloads/微信图片_正面.jpg";
+        String path = "/Users/sunan/java_project/demo/yt-parent/ocr-spring-boot-starter/docker/IDCARD.jpg";
+        String path1 = "/Users/sunan/java_project/demo/yt-parent/ocr-spring-boot-starter/docker/7d426df8d3145e2b.jpg";;
 
-        String path1 = "/Users/sunan/java_project/demo/ocr/ocr-spring-boot-starter/docker/7d426df8d3145e2b.jpg";;
-
-
-        String path2 = "/Users/sunan/Downloads/微信图片_20260528093539_34_198.png";
-        String path3 = "/Users/sunan/java_project/demo/ocr/ocr-spring-boot-starter/ocr_test_doc.png";
-
-
-
-
-// 改成：
-
-
+        String path2 = "/Users/sunan/java_project/demo/yt-parent/ocr-spring-boot-starter/docker/20260525094019_32_8.png";
+        String path3 = "/Users/sunan/java_project/demo/yt-parent/ocr-spring-boot-starter/docker/ocr_test_doc.png";
+        String path4 = "/Users/sunan/java_project/demo/yt-parent/ocr-spring-boot-starter/docker/副本标准房屋租赁合同.docx";
 
         StructureResult structureResult = structureService.ocrByPath(path3);
-
-        byte[] pdfBytes = wordToPdfService.ocrByPath("/Users/sunan/Downloads/副本标准房屋租赁合同.docx");
-
-// 保存到文件
-        java.nio.file.Files.write(
-                java.nio.file.Paths.get("/Users/sunan/Downloads/output.pdf"),
-                pdfBytes
-        );
-
-
-
+        byte[] pdfBytes = wordToPdfService.ocrByPath(path4);
+       // 保存到文件
+        java.nio.file.Files.write(java.nio.file.Paths.get("/Users/sunan/Downloads/output.pdf"), pdfBytes);
 
         OcrResult ocrResult = ocrChineseService.ocrByPath(path2);
-
         PlateResult plateResult = PlateService.ocrByPath(path1);
-        IdCardResult result = service.parseIdCardByUrl("http://127.0.0.1:9000/wuliu/idcard/b403135f-843e-4b9a-8360-0da1df6fb0b2-tmp_aec81dd8f87dee9fc6158f2049833fa5.jpg");
-
+        IdCardResult idCardResult = service.parseIdCardByPath(path);
+        IdCardResult result = service.parseIdCardByUrl("http://192.168.182.18:9000/wuliu/idcard/b403135f-843e-4b9a-8360-0da1df6fb0b2-tmp_aec81dd8f87dee9fc6158f2049833fa5.jpg");
         assertNotNull(result);
         assertNotNull(result.getName(), "姓名不应为空");
         assertNotNull(result.getIdNumber(), "身份证号不应为空");

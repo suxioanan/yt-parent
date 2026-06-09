@@ -2,6 +2,7 @@
 PaddleOCR 多模型服务
 供后端 Java 调用，支持不同模型/任务
 
+
 API:
   GET  /                健康检查
   POST /ocr/ch          PP-OCRv4 中文文字识别
