@@ -35,11 +35,7 @@ public class OnlineStatInterceptor implements HandlerInterceptor {
             String userId = onlineUserResolver.resolveUserId(request);
             String tenantId = onlineUserResolver.resolveTenantId(request);
             if (userId != null && tenantId != null) {
-                try {
-                    onlineStatService.recordOnlineDuration(userId, tenantId);
-                } catch (NumberFormatException e) {
-                    log.warn("Invalid tenantId format: {}", tenantId);
-                }
+                onlineStatService.recordOnlineDuration(userId, tenantId);
             }
         } catch (Exception e) {
             // 绝对不能影响主流程

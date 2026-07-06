@@ -92,7 +92,7 @@ public class MyOnlineUserResolver extends OnlineUserResolver {
 }
 ```
 
-> **只需继承 `OnlineUserResolver` 并覆写需要的方法即可，不用加 `@Component`，也不用其他任何配置。** Spring Boot 会自动扫描到你的实现并替换默认逻辑。
+> **只需继承 `OnlineUserResolver` 并覆写需要的方法即可，加 `@Component`。** Spring Boot 会自动扫描到你的实现并替换默认逻辑。
 
 ### 默认逻辑
 
@@ -107,14 +107,16 @@ online-spring-boot-starter/
 ├── build/
 │   └── OnlineKeyBuilder.java            # Redis Key 构建工具
 ├── config/
-│   ├── OnlineStatAutoConfiguration.java # 自动装配（启用入口）
-│   └── OnlineStatProperties.java        # 配置属性
+│   ├── OnlineStatAutoConfiguration.java    # 自动装配（启用入口）
+│   ├── OnlineServiceAutoConfiguration.java # 自动装配（配置service入口）
+│   └── OnlineStatProperties.java           # 配置属性
 ├── handle/
 │   ├── OnlineStatInterceptor.java       # HTTP 拦截器
 │   └── OnlineUserResolver.java          # 用户解析器（可继承覆写）
 └── service/
     ├── LoginStatService.java            # 登录统计服务     需要在登陆成功时，进行调用
     └── OnlineStatService.java           # 在线时长统计服务
+    └── OnlineService.java               # 获取时长数据
 ```
 
 ## 依赖要求

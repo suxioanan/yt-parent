@@ -63,7 +63,7 @@ public class OnlineServiceImpl implements IOnlineService {
             Integer loginCount = readInteger(loginKey);
 
             SysUserOnline e = new SysUserOnline();
-            e.setUserId(userId+"");
+            e.setUserId(userId);
             e.setStatDate(dayStr);
             e.setTenantId(tenantId);
             e.setOnlineMinutes(minutes == null ? 0 : minutes);
