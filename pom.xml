@@ -16,7 +16,7 @@
         <module>online-spring-boot-starter</module>
         <module>third-sso-starter</module>
         <module>third-pay-starter</module>
-        <module>sso-test</module>
+        <module>third-test</module>
     </modules>
 
     <properties>

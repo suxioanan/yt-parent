@@ -53,7 +53,7 @@ yt-parent/
 │   └── pay-all-starter/
 │       └── pom.xml
 │
-└── pay-test/
+└── third-test/
     ├── pom.xml
     └── src/main/
         ├── java/com/yt/pay/test/
@@ -85,8 +85,7 @@ yt-parent/
     <module>ocr-spring-boot-starter</module>
     <module>third-sso-starter</module>
     <module>third-pay-starter</module>
-    <module>sso-test</module>
-    <module>pay-test</module>
+    <module>third-test</module>
 </modules>
 ```
 
@@ -1548,4 +1547,4 @@ cd /Users/sunan/java_project/demo/yt-parent && mvn clean compile
 
 Expected: 所有模块 BUILD SUCCESS
 
-Reactor order: yt-parent → ocr-spring-boot-starter → third-sso-starter → sso-common → sso-dingtalk-starter → sso-wechat-starter → sso-wechat-open-starter → sso-feishu-starter → sso-all-starter → third-pay-starter → pay-common → pay-wechat-starter → pay-alipay-starter → pay-all-starter → sso-test → pay-test
+Reactor order: yt-parent → ocr-spring-boot-starter → third-sso-starter → sso-common → sso-dingtalk-starter → sso-wechat-starter → sso-wechat-open-starter → sso-feishu-starter → sso-all-starter → third-pay-starter → pay-common → pay-wechat-starter → pay-alipay-starter → pay-all-starter → test → pay-test

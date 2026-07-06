@@ -11,9 +11,9 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>sso-test</artifactId>
+    <artifactId>third-test</artifactId>
     <packaging>jar</packaging>
-    <name>sso-test</name>
+    <name>test</name>
     <description>SSO HTTP 测试模块 — 启动后通过 REST 接口验证钉钉/企业微信 SSO</description>
 
     <dependencies>

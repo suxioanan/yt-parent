@@ -1,13 +1,12 @@
 /third-sso-starter/sso-dingtalk-starter/target/
 /third-sso-starter/sso-feishu-starter/target/
 /third-sso-starter/sso-wechat-starter/target/
-/sso-test/target/classes/
+/third-test/target/classes/
 /.idea/
-/sso-test/target/
+/third-test/target/
 /third-sso-starter/sso-wechat-open-starter/target/
 /third-pay-starter/pay-wechat-starter/target/
 /third-pay-starter/pay-common/target/classes/
-/pay-test/
 /third-pay-starter/pay-alipay-starter/target/
 /third-pay-starter/pay-common/target/
 /ocr-spring-boot-starter/target/
@@ -15,3 +14,4 @@
 /third-pay-starter/pay-all-starter/target/
 /third-sso-starter/sso-all-starter/target/
 /online-spring-boot-starter/target/
+/third-test/target/

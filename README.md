@@ -27,7 +27,7 @@ yt-parent/
 │   ├── sso-feishu-starter/              # 飞书 SSO
 │   └── sso-all-starter/                 # 全家桶聚合（依赖以上三个）
 │
-└── sso-test/                            # SSO HTTP 测试应用
+└── third-test/                            # SSO HTTP 测试应用
 ```
 
 ---
@@ -268,7 +268,7 @@ getUserByUserId(userId):
 
 ---
 
-## 六、SSO 测试应用 (`sso-test`)
+## 六、SSO 测试应用 (`third-test`)
 
 可直接启动的 Spring Boot 应用，用于通过 HTTP 接口测试 SSO 功能。
 
@@ -276,10 +276,10 @@ getUserByUserId(userId):
 
 ```bash
 cd yt-parent
-mvn spring-boot:run -pl sso-test
+mvn spring-boot:run -pl third-test
 ```
 
-默认端口 `8089`，配置 `sso-test/src/main/resources/application.yml`。
+默认端口 `8089`，配置 `third-test/src/main/resources/application.yml`。
 
 ### 测试接口
 
@@ -343,11 +343,11 @@ sso:
 mvn clean compile
 
 # 全量测试
-mvn test
+mvn third-test
 
 # 仅编译 SSO 模块
 mvn compile -pl third-sso-starter
 
 # 启动测试应用
-mvn spring-boot:run -pl sso-test
+mvn spring-boot:run -pl third-test
 ```
