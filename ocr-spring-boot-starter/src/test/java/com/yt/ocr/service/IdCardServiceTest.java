@@ -72,7 +72,7 @@ class IdCardServiceTest {
         PlateResult plateResult = PlateService.ocrByPath(path1);
         IdCardResult idCardResult = service.parseIdCardByPath(path);
         IdCardResult idCardResult1 = service.parseIdCardByPath("/Users/sunan/java_project/demo/yt-parent/ocr-spring-boot-starter/docker/test.jpg");
-        IdCardResult result = service.parseIdCardByUrl("http://192.168.182.18:9000/wuliu/idcard/b403135f-843e-4b9a-8360-0da1df6fb0b2-tmp_aec81dd8f87dee9fc6158f2049833fa5.jpg");
+        IdCardResult result = service.parseIdCardByUrl("http://192.168.183.253:9000/wuliu/idcard/b403135f-843e-4b9a-8360-0da1df6fb0b2-tmp_aec81dd8f87dee9fc6158f2049833fa5.jpg");
         assertNotNull(result);
         assertNotNull(result.getName(), "姓名不应为空");
         assertNotNull(result.getIdNumber(), "身份证号不应为空");

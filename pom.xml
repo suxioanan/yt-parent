@@ -13,10 +13,10 @@
 
     <modules>
         <module>ocr-spring-boot-starter</module>
+        <module>online-spring-boot-starter</module>
         <module>third-sso-starter</module>
         <module>third-pay-starter</module>
         <module>sso-test</module>
-        <module>pay-test</module>
     </modules>
 
     <properties>
