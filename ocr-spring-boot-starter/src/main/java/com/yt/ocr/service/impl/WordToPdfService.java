@@ -69,12 +69,12 @@ public class WordToPdfService implements OcrOperations<byte[]> {
     /**
      * 通过文件路径将 Word 转换为 PDF
      *
-     * @param imagePath Word 文件路径
+     * @param apth Word 文件路径
      * @return PDF 文件的字节数组
      */
     @Override
-    public byte[] ocrByPath(String imagePath) {
-        return ocr(new File(imagePath));
+    public byte[] ocrByPath(String apth) {
+        return ocr(new File(apth));
     }
 
     /**
@@ -82,11 +82,11 @@ public class WordToPdfService implements OcrOperations<byte[]> {
      * <p>
      * 服务端会自行下载并转换，返回 PDF 字节
      *
-     * @param imageUrl Word 文档的 HTTP/HTTPS URL
+     * @param url Word 文档的 HTTP/HTTPS URL
      * @return PDF 文件的字节数组
      */
     @Override
-    public byte[] ocrByUrl(String imageUrl) {
-        return client.postUrlForBytes(getEndpoint(), imageUrl);
+    public byte[] ocrByUrl(String url) {
+        return client.postUrlForBytes(getEndpoint(), url);
     }
 }

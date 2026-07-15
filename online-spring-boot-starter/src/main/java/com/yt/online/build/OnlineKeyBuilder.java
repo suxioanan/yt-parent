@@ -19,18 +19,22 @@ public class OnlineKeyBuilder {
         return DATE_FORMATTER;
     }
 
+    /** 用于 系统登陆总次数 */
     public static String loginCount(String date) {
         return OnlineConstant.REDIS_SUM_COUNT_KEY + date;
     }
 
+    /** 用于 用户登陆总次数 */
     public static String loginUser(String userId, String tenantId, String date) {
         return OnlineConstant.REDIS_COUNT_KEY + date + OnlineConstant.SPLIT_STR + tenantId + OnlineConstant.SPLIT_STR + userId;
     }
 
+    /** 用于 用户最后登陆时间 */
     public static String lastActive(String userId, String tenantId) {
         return OnlineConstant.REDIS_LAST_ACTIVE_KEY + tenantId + OnlineConstant.SPLIT_STR + userId;
     }
 
+    /** 用于 在线时长 */
     public static String onlineDuration(String userId, String tenantId, String date) {
         return OnlineConstant.REDIS_ONLINE_KEY + date + OnlineConstant.SPLIT_STR + tenantId + OnlineConstant.SPLIT_STR + userId;
     }
@@ -42,6 +46,19 @@ public class OnlineKeyBuilder {
     /** 用于 SCAN 扫描某租户某日所有用户在线时长 */
     public static String onlineDurationScanPattern(String date, String tenantId) {
         return OnlineConstant.REDIS_ONLINE_KEY + date + OnlineConstant.SPLIT_STR + tenantId + OnlineConstant.SPLIT_STR + "*";
+    }
+
+
+
+    /**
+
+     * 今日在线用户集合
+
+     */
+    public static String todayOnlineUsers(String tenantId, String day) {
+
+        return OnlineConstant.REDIS_ACTIVE_KEY + tenantId + OnlineConstant.SPLIT_STR + day;
+
     }
 
 }

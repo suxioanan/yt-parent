@@ -42,6 +42,8 @@ public class OnlineStatServiceImpl implements IOnlineStatService {
         String lastIncrementKey = OnlineKeyBuilder.lastIncrement(userId, tenantId);
         String durationKey = OnlineKeyBuilder.onlineDuration(userId, tenantId, dayStr);
         String lastActiveKey = OnlineKeyBuilder.lastActive(userId, tenantId);
+        String todayOnlineUsersKey = OnlineKeyBuilder.todayOnlineUsers(tenantId, dayStr);
+
 
         try {
             long windowTtlMs = properties.getIntervalMs() * 2;
@@ -63,6 +65,16 @@ public class OnlineStatServiceImpl implements IOnlineStatService {
                 byte[] lastRawKey = ((RedisSerializer<String>) redis.getKeySerializer()).serialize(lastActiveKey);
                 byte[] lastRawValue = ((RedisSerializer<Object>) redis.getValueSerializer()).serialize(now);
                 connection.setEx(lastRawKey, lastActiveTtlSeconds, lastRawValue);
+
+                // 今日在线用户
+                byte[] todayKey = ((RedisSerializer<String>) redis.getKeySerializer()).serialize(todayOnlineUsersKey);
+                byte[] userValue = ((RedisSerializer<String>) redis.getKeySerializer()).serialize(userId);
+                Boolean exists = connection.exists(todayKey);
+                connection.sAdd(todayKey, userValue);
+                if (Boolean.FALSE.equals(exists)) {
+                    connection.expire(todayKey, properties.getKeyExpireDays() * 24 * 60 * 60);
+                }
+
                 return null;
             });
         } catch (Exception e) {

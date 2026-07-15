@@ -11,6 +11,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.serializer.RedisSerializer;
 
+import javax.swing.*;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -28,17 +29,84 @@ public class OnlineServiceImpl implements IOnlineService {
 
     private final RedisTemplate<String, Object> redis;
 
+    
+    /** 
+     * 
+     获取 用户 日在线数
+     **/
+    @Override
+    public List<String> getDayOnlineUsers(String tenantId) {
+        DateTimeFormatter datePattern = OnlineKeyBuilder.getDatePattern();
+        LocalDate yesterday = LocalDate.now().minusDays(1);
+        String dayStr = yesterday.format(datePattern);
+        log.info("租户{}:用户当日在线数据-------", tenantId);
+        return getDayOnlineUsers(tenantId,dayStr);
+    }
+
+    @Override
+    public List<String> getDayOnlineUsers(String tenantId, String dayStr) {
+        String pattern = OnlineKeyBuilder.todayOnlineUsers(dayStr, tenantId);
+        log.info("租户{}:用户当日在线数据-------", tenantId);
+        List<String> userIds = readSet(pattern);
+        return userIds;
+    }
+
+    @Override
+    public List<String> countOnlineUsers(String tenantId) {
+        log.info("租户{}:用户实时在线数据-------", tenantId);
+        DateTimeFormatter datePattern = OnlineKeyBuilder.getDatePattern();
+        LocalDate nowday = LocalDate.now();
+        String dayStr = nowday.format(datePattern);
+        return countOnlineUsers(tenantId,dayStr);
+    }
+
+    @Override
+    public List<String> countOnlineUsers(String tenantId, String dayStr) {
+        List<String> list = new ArrayList<>();
+        String pattern = OnlineKeyBuilder.lastActive(dayStr, tenantId);
+        log.info("租户{}:用户实时在线数据-------", tenantId);
+        Set<String> keys;
+        try {
+            keys = scanKeys(pattern);
+        } catch (Exception e) {
+            log.error("SCAN keys failed for tenant={}, pattern={}", tenantId, pattern, e);
+            return list;
+        }
+        if (keys.isEmpty()) {
+            return list;
+        }
+        list = new ArrayList<>(keys.size());
+        for (String key : keys) {
+            String userId = extractUserId(key);
+            if (userId == null) {
+                continue;
+            }
+            list.add(userId);
+        }
+        return list;
+    }
+
+
+    /**
+     *
+     * 将用户登陆信息转换成对象
+     **/
+
+    @Override
     public List<SysUserOnline> execute(String tenantId) {
         DateTimeFormatter datePattern = OnlineKeyBuilder.getDatePattern();
         LocalDate yesterday = LocalDate.now().minusDays(1);
         String dayStr = yesterday.format(datePattern);
+        return execute(tenantId,dayStr);
+    }
+
+    @Override
+    public List<SysUserOnline> execute(String tenantId, String dayStr) {
         Integer day = Integer.parseInt(dayStr);
         Integer month = Integer.parseInt(dayStr.substring(0, 6));
         Integer year = Integer.parseInt(dayStr.substring(0, 4));
-
         String pattern = OnlineKeyBuilder.onlineDurationScanPattern(dayStr, tenantId);
         log.info("租户{}:同步用户在线数据-------", tenantId);
-
         Set<String> keys;
         try {
             keys = scanKeys(pattern);
@@ -76,7 +144,9 @@ public class OnlineServiceImpl implements IOnlineService {
         return list;
     }
 
-    /** 使用 SCAN 替代 KEYS，避免阻塞 Redis */
+    /**
+     * 使用 SCAN 替代 KEYS，避免阻塞 Redis
+     */
     private Set<String> scanKeys(String pattern) {
         Set<String> keySet = new HashSet<>();
         redis.execute((RedisCallback<Object>) connection -> {
@@ -91,7 +161,9 @@ public class OnlineServiceImpl implements IOnlineService {
         return keySet;
     }
 
-    /** 读取 key 对应的 Integer 值 */
+    /**
+     * 读取 key 对应的 Integer 值
+     */
     private Integer readInteger(String key) {
         return redis.execute((RedisCallback<Integer>) connection -> {
             byte[] rawKey = ((RedisSerializer<String>) redis.getKeySerializer()).serialize(key);
@@ -103,7 +175,28 @@ public class OnlineServiceImpl implements IOnlineService {
         });
     }
 
-    /** 从 key 中解析 userId，key 格式：xxx:date:tenantId:userId */
+    /**
+     * 读取 Set 中所有成员
+     */
+    private List<String> readSet(String key) {
+        return redis.execute((RedisCallback<List<String>>) connection -> {
+            byte[] rawKey = ((RedisSerializer<String>) redis.getKeySerializer()).serialize(key);
+            Set<byte[]> rawValues = connection.sMembers(rawKey);
+
+            if (rawValues != null) {
+                List<String> result = new ArrayList<>(rawValues.size());
+                for (byte[] rawValue : rawValues) {
+                    result.add(new String(rawValue, StandardCharsets.UTF_8));
+                }
+                return result;
+            }
+            return new ArrayList<>();
+        });
+    }
+
+    /**
+     * 从 key 中解析 userId，key 格式：xxx:date:tenantId:userId
+     */
     private String extractUserId(String key) {
         try {
             String[] arr = key.split(":");
@@ -113,5 +206,6 @@ public class OnlineServiceImpl implements IOnlineService {
             return null;
         }
     }
+
 
 }

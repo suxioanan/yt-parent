@@ -17,5 +17,7 @@ public final class OnlineConstant {
 
     public static final String REDIS_LAST_ACTIVE_KEY = "online:last:";
 
+    public static final String REDIS_ACTIVE_KEY = "online:active:";
+
     public static final String REDIS_LAST_INCREMENT_KEY = "online:lastIncrement:";
 }
