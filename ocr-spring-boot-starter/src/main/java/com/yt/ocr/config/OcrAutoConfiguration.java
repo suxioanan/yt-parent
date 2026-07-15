@@ -61,4 +61,10 @@ public class OcrAutoConfiguration {
     public WordToPdfService wordToPdfService(OcrClient ocrClient, OcrProperties properties) {
         return new WordToPdfService(ocrClient, properties);
     }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public PdfToWordService pdfToWordService(OcrClient ocrClient, OcrProperties properties) {
+        return new PdfToWordService(ocrClient, properties);
+    }
 }

@@ -33,6 +33,8 @@ WORKDIR /app
 # 中文字体：保证 PDF 渲染时中文不会变成方块
 RUN apt-get update && apt-get install -y \
     libreoffice-writer-nogui \
+    libreoffice-draw-nogui \
+    libreoffice-impress-nogui \
     fonts-wqy-microhei \
     fonts-wqy-zenhei \
     fonts-noto-cjk \

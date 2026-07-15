@@ -12,6 +12,7 @@ uvicorn==0.34.0
 python-multipart==0.0.20
 Pillow>=10.0.0
 PyMuPDF>=1.25.0
+pdf2docx>=0.5.8
 
 # 车牌专用识别模型（替代 PaddleOCR 识别车牌）
 hyperlpr3>=0.1.0

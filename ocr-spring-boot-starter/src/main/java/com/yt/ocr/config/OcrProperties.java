@@ -18,5 +18,6 @@ public class OcrProperties {
         private String plate = "/ocr/plate";
         private String structure = "/structure";
         private String wordtopdf = "/convert/docx-to-pdf";
+        private String pdftoword = "/convert/pdf-to-docx";
     }
 }

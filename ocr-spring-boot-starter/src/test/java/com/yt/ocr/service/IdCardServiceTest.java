@@ -15,6 +15,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -55,6 +58,12 @@ class IdCardServiceTest {
         StructureService structureService = new StructureService(ocrClient, props);
         OcrChineseService ocrChineseService=new OcrChineseService(ocrClient, props);
         WordToPdfService wordToPdfService = new WordToPdfService(ocrClient, props);
+        PdfToWordService pdfToWordService = new PdfToWordService(ocrClient, props);
+
+
+
+
+
 
         String path = "/Users/sunan/java_project/demo/yt-parent/ocr-spring-boot-starter/docker/IDCARD.jpg";
         String path1 = "/Users/sunan/java_project/demo/yt-parent/ocr-spring-boot-starter/docker/7d426df8d3145e2b.jpg";;
@@ -63,20 +72,24 @@ class IdCardServiceTest {
         String path3 = "/Users/sunan/java_project/demo/yt-parent/ocr-spring-boot-starter/docker/ocr_test_doc.png";
         String path4 = "/Users/sunan/java_project/demo/yt-parent/ocr-spring-boot-starter/docker/副本标准房屋租赁合同.docx";
 
-        StructureResult structureResult = structureService.ocrByPath(path3);
+
         byte[] pdfBytes = wordToPdfService.ocrByPath(path4);
        // 保存到文件
-        java.nio.file.Files.write(java.nio.file.Paths.get("/Users/sunan/Downloads/output.pdf"), pdfBytes);
+        Files.write(Paths.get("/Users/sunan/Downloads/output.pdf"), pdfBytes);
 
-        OcrResult ocrResult = ocrChineseService.ocrByPath(path2);
-        PlateResult plateResult = PlateService.ocrByPath(path1);
-        IdCardResult idCardResult = service.parseIdCardByPath(path);
-        IdCardResult idCardResult1 = service.parseIdCardByPath("/Users/sunan/java_project/demo/yt-parent/ocr-spring-boot-starter/docker/test.jpg");
-        IdCardResult result = service.parseIdCardByUrl("http://192.168.183.253:9000/wuliu/idcard/b403135f-843e-4b9a-8360-0da1df6fb0b2-tmp_aec81dd8f87dee9fc6158f2049833fa5.jpg");
-        assertNotNull(result);
-        assertNotNull(result.getName(), "姓名不应为空");
-        assertNotNull(result.getIdNumber(), "身份证号不应为空");
-        System.out.println(result);
+        byte[] docx = pdfToWordService.ocr(new File("/Users/sunan/Downloads/output.pdf"));
+        Files.write(Paths.get("/Users/sunan/Downloads/output.docx"), docx);
+//
+//        StructureResult structureResult = structureService.ocrByPath(path3);
+//        OcrResult ocrResult = ocrChineseService.ocrByPath(path2);
+//        PlateResult plateResult = PlateService.ocrByPath(path1);
+//        IdCardResult idCardResult = service.parseIdCardByPath(path);
+//        IdCardResult idCardResult1 = service.parseIdCardByPath("/Users/sunan/java_project/demo/yt-parent/ocr-spring-boot-starter/docker/test.jpg");
+//        IdCardResult result = service.parseIdCardByUrl("http://192.168.183.253:9000/wuliu/idcard/b403135f-843e-4b9a-8360-0da1df6fb0b2-tmp_aec81dd8f87dee9fc6158f2049833fa5.jpg");
+//        assertNotNull(result);
+//        assertNotNull(result.getName(), "姓名不应为空");
+//        assertNotNull(result.getIdNumber(), "身份证号不应为空");
+//        System.out.println(result);
     }
     @Test
     void parseIdCardByPath_shouldParseAllFields() {

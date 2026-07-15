@@ -24,7 +24,8 @@ ocr:
     chinese: /ocr/ch                      # 中文识别端点，默认 /ocr/ch
     plate: /ocr/plate                     # 车牌识别端点，默认 /ocr/plate
     structure: /structure                 # 文档分析端点，默认 /structure
-    wordtopdf: /convert/docx-to-pdf       # 文档转换PDF，默认 /structure
+    wordtopdf: /convert/docx-to-pdf       # 文档转换PDF，默认 /convert/docx-to-pdf
+    pdftoword: /convert/pdf-to-docx       # PDF转Word，默认 /convert/pdf-to-docx
 ```
 
 仅 `base-url` 为必填项，其余均有默认值。
@@ -43,6 +44,10 @@ public class OcrController {
     private StructureService structureService;  // 文档结构分析
     @Autowired
     private IdCardService idCardService;        // 身份证识别
+    @Autowired
+    private WordToPdfService wordToPdfService;  // Word 转 PDF
+    @Autowired
+    private PdfToWordService pdfToWordService;  // PDF 转 Word
 }
 ```
 
@@ -130,6 +135,20 @@ IdCardResult card = idCardService.parseIdCardByPath("/path/to/idcard.jpg");
 | `birthDate` | 出生日期 |
 | `address` | 住址 |
 
+### WordToPdfService — Word 转 PDF
+
+```java
+byte[] pdf = wordToPdfService.ocr(new File("/path/to/document.docx"));
+// 返回 PDF 文件字节数组，可直接保存为 .pdf 文件
+```
+
+### PdfToWordService — PDF 转 Word
+
+```java
+byte[] docx = pdfToWordService.ocr(new File("/path/to/document.pdf"));
+// 返回 Word (.docx) 文件字节数组，可直接保存为 .docx 文件
+```
+
 ## 模型说明
 
 ### OcrResult
@@ -172,7 +191,9 @@ OcrOperations<T>                  ← 统一接口
   ├── OcrChineseService           → /ocr/ch  返回 OcrResult
   │     └── IdCardService         → 继承，追加 parseIdCard()
   ├── OcrPlateService             → /ocr/plate  返回 OcrResult
-  └── StructureService            → /structure  返回 StructureResult
+  ├── StructureService            → /structure  返回 StructureResult
+  ├── WordToPdfService            → /convert/docx-to-pdf  返回 byte[]
+  └── PdfToWordService            → /convert/pdf-to-docx  返回 byte[]
 ```
 
 ## 自动装配
@@ -188,3 +209,5 @@ OcrOperations<T>                  ← 统一接口
 - `OcrPlateService`
 - `StructureService`
 - `IdCardService`
+- `WordToPdfService`
+- `PdfToWordService`

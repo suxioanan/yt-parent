@@ -8,7 +8,8 @@ API:
   POST /ocr/ch          PP-OCRv4 中文文字识别
   POST /ocr/plate       车牌识别
   POST /structure       PP-Structure 文档结构分析（表格/标题/段落）
-  POST /convert/docx-to-pdf  docx/docx -> PDF 转换
+  POST /convert/docx-to-pdf  docx/doc -> PDF 转换
+  POST /convert/pdf-to-docx  PDF -> docx 转换
 """
 
 import os
@@ -457,12 +458,24 @@ def _convert_doc_to_pdf(doc_path: str) -> str:
             )
 
         # 查找生成的 PDF
+        # 策略1：按输入文件 base name 精确匹配
         base = os.path.splitext(os.path.basename(doc_path))[0]
-        for f in os.listdir(out_dir):
+        out_files = os.listdir(out_dir)
+        for f in out_files:
             if f.lower().startswith(base.lower()) and f.lower().endswith(".pdf"):
                 return os.path.join(out_dir, f)
 
-        raise RuntimeError("PDF not found after LibreOffice conversion")
+        # 策略2：回退 — 查找目录中任意 .pdf 文件
+        pdf_files = [f for f in out_files if f.lower().endswith(".pdf")]
+        if len(pdf_files) == 1:
+            logger.info(f"[Convert] docx-to-pdf fallback (single pdf): {pdf_files[0]}")
+            return os.path.join(out_dir, pdf_files[0])
+
+        raise RuntimeError(
+            f"PDF not found after LibreOffice conversion. "
+            f"out_dir={out_dir!r}, files={out_files!r}, "
+            f"stdout={result.stdout!r}, stderr={result.stderr!r}"
+        )
 
     except FileNotFoundError:
         raise RuntimeError(
@@ -955,8 +968,10 @@ def home():
         "service": "PaddleOCR Multi-Model",
         "endpoints": {
             "ocr_ch": "POST /ocr/ch       - 中文文字识别 (PP-OCRv4)",
-            "ocr_plate": "POST /ocr/plate  - 车牌识别",
-            "structure": "POST /structure  - 文档结构分析 (PP-Structure)",
+            "ocr_plate": "POST /ocr/plate        - 车牌识别",
+            "structure": "POST /structure        - 文档结构分析 (PP-Structure)",
+            "docx_to_pdf": "POST /convert/docx-to-pdf - Word 转 PDF",
+            "pdf_to_docx": "POST /convert/pdf-to-docx - PDF 转 Word",
         }
     }
 
@@ -1252,6 +1267,155 @@ def convert_docx_to_pdf(
         raise
     except Exception as e:
         _cleanup_temp_files(docx_path, pdf_path)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Document conversion failed: {str(e)}"
+        )
+
+
+def _convert_pdf_to_docx(pdf_path: str) -> str:
+    """
+    将 .pdf 转换为 .docx（使用 pdf2docx）。
+    返回 docx 临时文件路径。
+    """
+    try:
+        from pdf2docx import Converter
+    except ImportError:
+        raise RuntimeError(
+            "pdf2docx not installed. Run: pip install pdf2docx"
+        )
+
+    docx_path = tempfile.NamedTemporaryFile(delete=False, suffix=".docx").name
+    try:
+        cv = Converter(pdf_path)
+        cv.convert(docx_path)
+        cv.close()
+        logger.info(f"[Convert] pdf-to-docx done: {pdf_path} -> {docx_path}")
+        return docx_path
+    except Exception:
+        try:
+            os.remove(docx_path)
+        except OSError:
+            pass
+        raise RuntimeError(
+            f"pdf2docx conversion failed for {pdf_path!r}"
+        )
+
+
+# ============================================================
+# 文档格式转换独立接口（PDF -> docx）
+# ============================================================
+
+
+@app.post("/convert/pdf-to-docx")
+@app.post("/convert/pdf-to-docx/url")
+def convert_pdf_to_docx(
+        file: UploadFile = File(None),
+        url: str = Query(None, description="PDF 文档 URL，与 file 二选一"),
+        background_tasks: BackgroundTasks = None,
+):
+    """
+    PDF -> docx 转换
+    上传 PDF 文件或提供 URL，返回 Word (.docx) 文件流
+    """
+    pdf_path = None
+    docx_path = None
+
+    try:
+        # 通过 URL 下载
+        if url:
+            logger.info(f"[Convert] pdf-to-docx from URL: {url}")
+            if not url.startswith(("http://", "https://")):
+                raise HTTPException(status_code=400, detail="Invalid URL")
+
+            # SSRF 防护
+            hostname = urlparse(url).hostname
+            if not hostname:
+                raise HTTPException(status_code=400, detail="Invalid URL: cannot extract hostname")
+            _check_ssrf(hostname)
+
+            suffix = os.path.splitext(url.split("?")[0])[-1].lower()
+            if suffix != ".pdf":
+                suffix = ".pdf"
+
+            # 使用安全的下载方式
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            try:
+                tmp.close()
+                req = urllib.request.Request(url, headers={"User-Agent": "OCR-Server/1.0"})
+                with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT) as response:
+                    content_length = response.headers.get("Content-Length")
+                    if content_length and int(content_length) > MAX_DOWNLOAD_SIZE:
+                        os.remove(tmp.name)
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"File size ({content_length} bytes) exceeds maximum ({MAX_DOWNLOAD_SIZE})"
+                        )
+                    downloaded_size = 0
+                    with open(tmp.name, "wb") as f:
+                        while True:
+                            chunk = response.read(8192)
+                            if not chunk:
+                                break
+                            downloaded_size += len(chunk)
+                            if downloaded_size > MAX_DOWNLOAD_SIZE:
+                                os.remove(tmp.name)
+                                raise HTTPException(
+                                    status_code=400,
+                                    detail=f"Downloaded file too large (>{MAX_DOWNLOAD_SIZE} bytes)"
+                                )
+                            f.write(chunk)
+                pdf_path = tmp.name
+            except HTTPException:
+                raise
+            except Exception as e:
+                try:
+                    os.remove(tmp.name)
+                except OSError:
+                    pass
+                raise HTTPException(status_code=400, detail=f"Failed to download URL: {str(e)}")
+
+        # 上传文件
+        elif file:
+            if not file.filename:
+                raise HTTPException(status_code=400, detail="Filename is required")
+
+            suffix = os.path.splitext(file.filename)[-1].lower()
+            if suffix != ".pdf":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported format: {suffix}. Only .pdf allowed"
+                )
+
+            logger.info(f"[Convert] pdf-to-docx: {file.filename}")
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            shutil.copyfileobj(file.file, tmp)
+            pdf_path = tmp.name
+            tmp.close()
+
+        else:
+            raise HTTPException(status_code=400, detail="Must provide 'file' or 'url'")
+
+        docx_path = _convert_pdf_to_docx(pdf_path)
+        logger.info(f"[Convert] done -> {docx_path}")
+
+        # 后台清理（响应完成后执行）
+        if background_tasks:
+            background_tasks.add_task(_cleanup_temp_files, pdf_path, docx_path)
+
+        docx_filename = os.path.splitext(
+            file.filename if file else url.split("?")[0]
+        )[0] + ".docx"
+        return FileResponse(
+            docx_path,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename=docx_filename,
+            background=background_tasks,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        _cleanup_temp_files(pdf_path, docx_path)
         raise HTTPException(
             status_code=500,
             detail=f"Document conversion failed: {str(e)}"
